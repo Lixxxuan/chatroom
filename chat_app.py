@@ -71,6 +71,18 @@ def get_user_color(username):
         user_colors[username] = colors[len(user_colors) % len(colors)]
     return user_colors[username]
 
+from flask import jsonify  # 确保导入jsonify
+
+@app.route('/health')
+def health_check():
+    return jsonify({
+        'status': 'healthy', 
+        'websocket': True,
+        'timestamp': datetime.now().isoformat()
+    })
+
+# 确保Socket.IO初始化正确
+socketio = SocketIO(app, cors_allowed_origins="*")
 # 路由部分
 @app.route('/')
 def index():
