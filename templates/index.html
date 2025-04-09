@@ -24,6 +24,11 @@
         .user-list-item:hover {
             background-color: #f3f4f6;
         }
+        .progress-bar {
+            height: 4px;
+            background-color: #3b82f6;
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -59,15 +64,38 @@
                     {% for username, message, timestamp, color in messages %}
                         <div class="flex flex-col message-container">
                             <span class="text-xs text-gray-500">{{ timestamp }}</span>
-                            <p class="text-gray-800 bg-gray-50 p-2 rounded-lg" style="color: {{ color }}">{{ username }}: {{ message }}</p>
+                            {% if message.startswith('[图片]') %}
+                                {% set image_url = message.split('[图片] ')[1] %}
+                                <div class="flex items-start gap-2">
+                                    <span class="font-medium" style="color: {{ color }}">{{ username }}:</span>
+                                    <img src="{{ image_url }}" class="max-w-xs max-h-48 rounded-lg border border-gray-200" loading="lazy">
+                                </div>
+                            {% else %}
+                                <div class="flex items-start gap-2">
+                                    <span class="font-medium" style="color: {{ color }}">{{ username }}:</span>
+                                    <p class="text-gray-800 bg-gray-50 p-2 rounded-lg">{{ message }}</p>
+                                </div>
+                            {% endif %}
                         </div>
                     {% endfor %}
+                </div>
+
+                <!-- 上传进度条 -->
+                <div id="upload-progress" class="hidden mt-2">
+                    <div class="text-sm text-gray-500 mb-1">上传进度</div>
+                    <div class="w-full bg-gray-200 rounded-full h-1.5">
+                        <div id="progress-bar" class="progress-bar h-1.5 rounded-full" style="width: 0%"></div>
+                    </div>
                 </div>
 
                 <div class="mt-4 flex gap-2">
                     <input id="message" type="text" placeholder="输入消息" autocomplete="off"
                            class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <button onclick="sendMessage()" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500">发送</button>
+                    <label for="image-upload" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                        图片
+                        <input id="image-upload" type="file" accept="image/*" class="hidden">
+                    </label>
                 </div>
             </div>
         </div>
@@ -110,7 +138,7 @@
             const userList = document.getElementById('user-list');
             userList.innerHTML = '';
             document.getElementById('online-count').textContent = `(${data.users.length})`;
-
+            
             data.users.forEach(user => {
                 if (user !== username) {
                     const userElement = document.createElement('div');
@@ -143,16 +171,16 @@
         // 发送私聊消息
         function sendPrivateMessage() {
             if (!currentPrivateChat) return;
-
+            
             const input = document.getElementById('private-message');
             const message = input.value.trim();
-
+            
             if (message) {
                 socket.emit('private_message', {
                     to: currentPrivateChat,
                     message: message
                 });
-
+                
                 // 添加到自己的私聊窗口
                 addPrivateMessage(`你 -> ${currentPrivateChat}: ${message}`, 'text-blue-600', 'private-messages');
                 input.value = '';
@@ -163,7 +191,7 @@
         socket.on('private_message_received', (data) => {
             const targetContainer = 'private-messages';
             addPrivateMessage(`${data.from} -> 你: ${data.message}`, `text-[${data.color}]`, targetContainer);
-
+            
             // 如果当前不是和发送者的私聊窗口，显示通知
             if (currentPrivateChat !== data.from) {
                 showNotification(`${data.from}发来私聊`, data.message);
@@ -187,34 +215,60 @@
 
         // 用户加入聊天室
         socket.on('user_joined', (data) => {
-            addMessage(`${data.timestamp || ''} ${data.username} 加入了聊天室`, data.color);
+            addMessage(`${data.timestamp || ''} ${data.username} 加入了聊天室`, data.color, 'text');
         });
 
         // 用户离开聊天室
         socket.on('user_left', (data) => {
-            addMessage(`${data.username} 离开了聊天室`, '#ef4444');
+            addMessage(`${data.username} 离开了聊天室`, '#ef4444', 'text');
         });
 
         // 接收新消息
         socket.on('new_message', (data) => {
-            addMessage(`${data.timestamp} ${data.username}: ${data.message}`, data.color);
+            addMessage(`${data.timestamp} ${data.username}: ${data.content}`, data.color, data.type);
         });
 
         // 添加消息到聊天室
-        function addMessage(msg, color) {
+        function addMessage(msg, color, type) {
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'flex flex-col message-container';
-
+            
             // 分离时间戳和消息内容
             const [time, ...rest] = msg.split(' ');
             const messageContent = rest.join(' ');
-
-            div.innerHTML = `
-                <span class="text-xs text-gray-500">${time}</span>
-                <p class="text-gray-800 bg-gray-50 p-2 rounded-lg" style="color: ${color}">${messageContent}</p>
-            `;
-
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'text-xs text-gray-500';
+            timeSpan.textContent = time;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'flex items-start gap-2';
+            
+            const userSpan = document.createElement('span');
+            userSpan.className = 'font-medium';
+            userSpan.style.color = color;
+            userSpan.textContent = messageContent.split(':')[0] + ':';
+            
+            contentDiv.appendChild(userSpan);
+            
+            if (type === 'image') {
+                const imgUrl = messageContent.split(': ')[1];
+                const img = document.createElement('img');
+                img.src = imgUrl;
+                img.className = 'max-w-xs max-h-48 rounded-lg border border-gray-200';
+                img.loading = 'lazy';
+                contentDiv.appendChild(img);
+            } else {
+                const textContent = messageContent.split(': ')[1] || '';
+                const textP = document.createElement('p');
+                textP.className = 'text-gray-800 bg-gray-50 p-2 rounded-lg';
+                textP.textContent = textContent;
+                contentDiv.appendChild(textP);
+            }
+            
+            div.appendChild(timeSpan);
+            div.appendChild(contentDiv);
             messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
         }
@@ -238,17 +292,84 @@
                 alert('请先点击"进入聊天"按钮加入聊天室');
                 return;
             }
-
+            
             const input = document.getElementById('message');
             const message = input.value.trim();
-
+            
             if (message) {
-                socket.emit('message', {
-                    message: message
+                socket.emit('message', { 
+                    message: message 
                 });
                 input.value = '';
             }
         }
+
+        // 图片上传处理
+        document.getElementById('image-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // 检查文件类型
+            const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+            if (!validTypes.includes(file.type)) {
+                alert('只支持JPEG、PNG和GIF格式的图片');
+                e.target.value = '';
+                return;
+            }
+            
+            // 检查文件大小 (5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                alert('图片大小不能超过5MB');
+                e.target.value = '';
+                return;
+            }
+            
+            // 显示上传进度
+            const progressContainer = document.getElementById('upload-progress');
+            const progressBar = document.getElementById('progress-bar');
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload', true);
+            
+            // 上传进度事件
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressBar.style.width = percent + '%';
+                }
+            };
+            
+            xhr.onload = function() {
+                progressContainer.classList.add('hidden');
+                
+                if (xhr.status === 200) {
+                    const response = JSON.parse(xhr.responseText);
+                    if (response.url) {
+                        // 发送图片消息
+                        socket.emit('message', { image_url: response.url });
+                    } else if (response.error) {
+                        alert('上传失败: ' + response.error);
+                    }
+                } else {
+                    alert('上传出错: ' + xhr.statusText);
+                }
+                
+                e.target.value = ''; // 重置input
+            };
+            
+            xhr.onerror = function() {
+                progressContainer.classList.add('hidden');
+                alert('上传过程中发生错误');
+                e.target.value = '';
+            };
+            
+            xhr.send(formData);
+        });
 
         // 显示通知
         function showNotification(title, message) {
