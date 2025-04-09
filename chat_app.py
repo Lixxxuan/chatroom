@@ -7,22 +7,27 @@ import random
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*", logger=False, engineio_logger=False)
 
 # 存储在线用户和颜色
 users = {}  # {sid: {'username': str, 'color': str}}
 
 
-# 初始化数据库
+# 初始化或更新数据库
 def init_db():
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
+    # 检查表是否存在，如果不存在则创建
     c.execute('''CREATE TABLE IF NOT EXISTS messages 
                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                  username TEXT, 
                  message TEXT, 
-                 timestamp TEXT, 
-                 color TEXT)''')
+                 timestamp TEXT)''')
+    # 检查是否需要添加 color 列
+    c.execute("PRAGMA table_info(messages)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'color' not in columns:
+        c.execute("ALTER TABLE messages ADD COLUMN color TEXT DEFAULT '#000000'")
     conn.commit()
     conn.close()
 
@@ -78,7 +83,7 @@ def handle_message(data):
     user = users.get(request.sid, {'username': 'Anonymous', 'color': '#000000'})
     username = user['username']
     color = user['color']
-    timestamp = datetime.now().strftime('%H:%M:%S')  # 只显示时间，缩小显示
+    timestamp = datetime.now().strftime('%H:%M:%S')  # 只显示时间
 
     # 存储到数据库
     conn = sqlite3.connect('chat.db')
@@ -101,5 +106,7 @@ def handle_message(data):
 if __name__ == '__main__':
     if not os.path.exists('chat.db'):
         init_db()
+    else:
+        init_db()  # 确保现有数据库更新结构
     socketio.run(app, host='0.0.0.0', port=5000, debug=False,
                  use_reloader=False, log_output=False)
