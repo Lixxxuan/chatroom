@@ -15,6 +15,9 @@
             background-color: #f0f7ff;
             border-left: 3px solid #3b82f6;
         }
+        .message-container {
+            transition: all 0.3s ease;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -31,8 +34,8 @@
                     <div id="private-messages" class="bg-gray-50 p-2 rounded mb-2 h-48 overflow-y-auto"></div>
                     <div class="flex gap-2">
                         <input id="private-message" type="text" placeholder="输入私聊消息"
-                               class="flex-1 p-2 border border-gray-300 rounded-lg">
-                        <button onclick="sendPrivateMessage()" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600">发送</button>
+                               class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button onclick="sendPrivateMessage()" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">发送</button>
                     </div>
                 </div>
             </div>
@@ -41,7 +44,7 @@
             <div class="flex-1">
                 <div id="messages" class="bg-white rounded-lg shadow-md p-4 h-[70vh] overflow-y-auto flex flex-col gap-4">
                     {% for username, message, timestamp, color in messages %}
-                        <div class="flex flex-col">
+                        <div class="flex flex-col message-container">
                             <span class="text-xs text-gray-500">{{ timestamp }}</span>
                             <p class="text-gray-800 bg-gray-50 p-2 rounded-lg" style="color: {{ color }}">{{ username }}: {{ message }}</p>
                         </div>
@@ -51,7 +54,7 @@
                 <div class="mt-4 flex gap-2">
                     <input id="message" type="text" placeholder="输入消息" autocomplete="off"
                            class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <button onclick="sendMessage()" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">发送</button>
+                    <button onclick="sendMessage()" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500">发送</button>
                 </div>
             </div>
         </div>
@@ -59,7 +62,7 @@
         <div class="flex gap-2 mt-4">
             <input id="username" type="text" value="{{ username }}" readonly
                    class="flex-1 p-2 border border-gray-300 rounded-lg bg-gray-200">
-            <button onclick="joinChat()" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">进入聊天</button>
+            <button onclick="joinChat()" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">进入聊天</button>
         </div>
     </div>
 
@@ -68,14 +71,12 @@
         const socket = io();
         let username = '';
         let currentPrivateChat = null;
+        let isJoined = false;
 
         // 初始化
         socket.on('connect', () => {
             console.log('Connected to server');
             username = document.getElementById('username').value.trim();
-            if (username) {
-                socket.emit('join', { username: username });
-            }
         });
 
         // 用户列表更新
@@ -84,9 +85,9 @@
             userList.innerHTML = '';
 
             data.users.forEach(user => {
-                if (user !== username) {  // 不显示自己
+                if (user !== username) {
                     const userElement = document.createElement('div');
-                    userElement.className = 'flex items-center justify-between p-2 hover:bg-gray-100 rounded cursor-pointer';
+                    userElement.className = 'flex items-center justify-between p-2 hover:bg-gray-100 rounded cursor-pointer transition-colors';
                     userElement.innerHTML = `<span>${user}</span>`;
                     userElement.onclick = () => startPrivateChat(user);
                     userList.appendChild(userElement);
@@ -100,6 +101,7 @@
             document.getElementById('private-with').textContent = withUser;
             document.getElementById('private-chat').classList.remove('hidden');
             document.getElementById('private-messages').innerHTML = '';
+            document.getElementById('private-message').focus();
         }
 
         // 发送私聊消息
@@ -113,84 +115,143 @@
                 socket.emit('private_message', {
                     to: currentPrivateChat,
                     message: message
+                }, (response) => {
+                    if (response && response.error) {
+                        console.error('私聊发送失败:', response.error);
+                    } else {
+                        addPrivateMessage(`你 -> ${currentPrivateChat}: ${message}`, 'text-blue-600', 'private-messages');
+                        input.value = '';
+                    }
                 });
-
-                // 添加到自己的私聊窗口
-                addPrivateMessage(`你 -> ${currentPrivateChat}: ${message}`, 'text-blue-600', 'private-messages');
-                input.value = '';
             }
         }
 
         // 接收私聊消息
         socket.on('private_message_received', (data) => {
-            let targetContainer = 'private-messages';
-
-            // 如果当前不是和发送者的私聊窗口，或者私聊窗口未打开
-            if (currentPrivateChat !== data.from) {
-                // 可以在这里添加通知逻辑
-                console.log(`新私聊来自 ${data.from}`);
-            }
-
+            const targetContainer = 'private-messages';
             addPrivateMessage(`${data.from} -> 你: ${data.message}`, `text-[${data.color}]`, targetContainer);
+
+            // 通知用户有新消息
+            if (currentPrivateChat !== data.from) {
+                const notification = new Notification('新私聊消息', {
+                    body: `${data.from}: ${data.message}`,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png'
+                });
+            }
+        });
+
+        // 私聊消息发送成功回执
+        socket.on('private_message_sent', (data) => {
+            console.log(`私聊消息已发送给 ${data.to}`);
         });
 
         // 添加私聊消息到界面
         function addPrivateMessage(msg, colorClass, containerId) {
             const container = document.getElementById(containerId);
             const div = document.createElement('div');
-            div.className = `p-2 mb-2 rounded private-message ${colorClass}`;
+            div.className = `p-2 mb-2 rounded private-message ${colorClass} message-container`;
             div.textContent = msg;
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
         }
 
-        // 原有公共聊天功能保持不变
+        // 用户加入聊天室
         socket.on('user_joined', (data) => {
             addMessage(`${data.timestamp || ''} ${data.username} 加入了聊天室`, data.color);
         });
 
+        // 用户离开聊天室
         socket.on('user_left', (data) => {
             addMessage(`${data.username} 离开了聊天室`, '#ef4444');
         });
 
+        // 接收新消息
         socket.on('new_message', (data) => {
             addMessage(`${data.timestamp} ${data.username}: ${data.message}`, data.color);
         });
 
+        // 添加消息到聊天室
         function addMessage(msg, color) {
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
-            div.className = 'flex flex-col';
+            div.className = 'flex flex-col message-container';
+
+            // 分离时间戳和消息内容
             const [time, ...rest] = msg.split(' ');
-            div.innerHTML = `<span class="text-xs text-gray-500">${time}</span>
-                           <p class="text-gray-800 bg-gray-50 p-2 rounded-lg" style="color: ${color}">${rest.join(' ')}</p>`;
+            const messageContent = rest.join(' ');
+
+            div.innerHTML = `
+                <span class="text-xs text-gray-500">${time}</span>
+                <p class="text-gray-800 bg-gray-50 p-2 rounded-lg" style="color: ${color}">${messageContent}</p>
+            `;
+
             messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
+
+            // 添加动画效果
+            setTimeout(() => {
+                div.style.opacity = '1';
+                div.style.transform = 'translateY(0)';
+            }, 10);
         }
 
+        // 加入聊天室
         function joinChat() {
             username = document.getElementById('username').value.trim();
             if (username) {
-                socket.emit('join', { username: username });
+                socket.emit('join', { username: username }, (response) => {
+                    if (response && response.success) {
+                        isJoined = true;
+                        document.getElementById('username').disabled = true;
+                        document.getElementById('message').focus();
+                        console.log('成功加入聊天室');
+                    } else {
+                        alert('加入聊天室失败: ' + (response?.error || '未知错误'));
+                    }
+                });
+            } else {
+                alert('请输入用户名');
             }
         }
 
+        // 发送消息
         function sendMessage() {
+            if (!isJoined) {
+                alert('请先点击"进入聊天"按钮加入聊天室');
+                return;
+            }
+
             const input = document.getElementById('message');
             const message = input.value.trim();
-            if (message && username) {
-                socket.emit('message', { message: message });
-                input.value = '';
+
+            if (message) {
+                socket.emit('message', {
+                    message: message
+                }, (response) => {
+                    if (response && response.error) {
+                        console.error('消息发送失败:', response.error);
+                        alert('发送消息失败: ' + response.error);
+                    } else {
+                        input.value = '';
+                    }
+                });
             }
         }
 
+        // 回车键发送消息
         document.getElementById('message').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
 
+        // 回车键发送私聊消息
         document.getElementById('private-message').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendPrivateMessage();
         });
+
+        // 请求通知权限
+        if (Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
     </script>
 </body>
 </html>
