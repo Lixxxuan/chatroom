@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime
 import random
 import uuid
-from flask import Flask, render_template, request, session, redirect, url_for, flash
+from flask import Flask, render_template, request, session, redirect, url_for, flash, send_from_directory
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -21,7 +21,54 @@ users = {}          # {sid: {'username': str, 'color': str}}
 online_users = {}   # {username: {'sid': str, 'color': str}}
 INVITATION_CODES = ["CHAT2023", "WELCOME123"]
 
+def check_table_columns(table_name, required_columns):
+    """检查表是否包含所有必需的列"""
+    with sqlite3.connect('chat.db') as conn:
+        c = conn.cursor()
+        c.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = [col[1] for col in c.fetchall()]
+        return all(col in existing_columns for col in required_columns)
+
+def migrate_messages_table():
+    """执行消息表迁移"""
+    print("正在执行数据库迁移...")
+    with sqlite3.connect('chat.db') as conn:
+        c = conn.cursor()
+        
+        # 1. 重命名旧表
+        c.execute("ALTER TABLE messages RENAME TO messages_old")
+        
+        # 2. 创建新表结构
+        c.execute('''CREATE TABLE messages 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                     username TEXT, 
+                     message TEXT, 
+                     timestamp TEXT,
+                     color TEXT,
+                     is_private INTEGER DEFAULT 0,
+                     target_user TEXT DEFAULT NULL,
+                     message_type TEXT DEFAULT 'text')''')
+        
+        # 3. 迁移数据
+        c.execute('''INSERT INTO messages 
+                    (id, username, message, timestamp, color, is_private, target_user, message_type)
+                    SELECT id, username, message, timestamp, color, is_private, target_user, 
+                           CASE WHEN message LIKE '[图片]%' THEN 'image' ELSE 'text' END
+                    FROM messages_old''')
+        
+        # 4. 清理旧表
+        c.execute("DROP TABLE messages_old")
+        
+        # 5. 创建索引
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
+        
+        conn.commit()
+    print("数据库迁移完成")
+
 def init_db():
+    """初始化数据库结构"""
     with sqlite3.connect('chat.db') as conn:
         c = conn.cursor()
         
@@ -32,7 +79,7 @@ def init_db():
                      password TEXT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
-        # 消息表（新增message_type字段）
+        # 消息表（新结构）
         c.execute('''CREATE TABLE IF NOT EXISTS messages 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                      username TEXT, 
@@ -43,9 +90,16 @@ def init_db():
                      target_user TEXT DEFAULT NULL,
                      message_type TEXT DEFAULT 'text')''')
         
-        # 创建索引
-        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
+        # 检查是否需要迁移
+        if not check_table_columns('messages', ['message_type']):
+            migrate_messages_table()
+        else:
+            # 确保索引存在
+            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
+        
+        conn.commit()
 
 def generate_dark_color():
     r = random.randint(0, 180)
