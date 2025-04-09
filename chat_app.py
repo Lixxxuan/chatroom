@@ -173,10 +173,38 @@ def upload_file():
 
 @app.route('/static/uploads/<filename>')
 def uploaded_file(filename):
-    response = send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    # 确保文件名安全
+    safe_filename = secure_filename(filename)
+    if not safe_filename or safe_filename != filename:
+        return "Invalid filename", 400
+    
+    # 检查文件是否存在
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], safe_filename)
+    if not os.path.exists(filepath):
+        return "File not found", 404
+    
+    # 设置正确的MIME类型
+    mimetype = None
+    if filename.lower().endswith('.png'):
+        mimetype = 'image/png'
+    elif filename.lower().endswith('.jpg') or filename.lower().endswith('.jpeg'):
+        mimetype = 'image/jpeg'
+    elif filename.lower().endswith('.gif'):
+        mimetype = 'image/gif'
+    
+    # 发送文件并设置安全头
+    response = send_from_directory(
+        app.config['UPLOAD_FOLDER'],
+        safe_filename,
+        mimetype=mimetype
+    )
+    
+    # 安全头设置
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Content-Security-Policy'] = "default-src 'self'"
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Cache-Control'] = 'public, max-age=31536000'  # 1年缓存
+    
     return response
 
 # Socket.IO 事件处理
