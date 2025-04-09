@@ -70,6 +70,67 @@ def register_user(username, password, invitation_code):
         conn.close()
 
 
+online_users = {}  # {username: {'sid': str, 'color': str}}
+
+
+@socketio.on('join')
+def handle_join():
+    if 'username' not in session:
+        return False
+
+    username = session['username']
+    color = generate_dark_color()
+    users[request.sid] = {'username': username, 'color': color}
+    online_users[username] = {'sid': request.sid, 'color': color}
+    emit('user_joined', {'username': username, 'color': color}, broadcast=True)
+    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    if request.sid in users:
+        username = users[request.sid]['username']
+        del users[request.sid]
+        if username in online_users:
+            del online_users[username]
+        emit('user_left', {'username': username}, broadcast=True)
+        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+
+
+# 新增私聊消息处理
+@socketio.on('private_message')
+def handle_private_message(data):
+    if 'username' not in session or request.sid not in users:
+        return False
+
+    sender = session['username']
+    receiver = data['to']
+    message = data['message']
+    timestamp = datetime.now().strftime('%H:%M:%S')
+
+    if receiver not in online_users:
+        emit('private_message_error', {'message': '用户不在线'})
+        return
+
+    # 获取发送者和接收者的颜色
+    sender_color = users[request.sid]['color']
+    receiver_color = online_users[receiver]['color']
+
+    # 给接收者发送消息
+    emit('private_message_received', {
+        'from': sender,
+        'message': message,
+        'timestamp': timestamp,
+        'color': sender_color
+    }, room=online_users[receiver]['sid'])
+
+    # 给发送者发送回执
+    emit('private_message_sent', {
+        'to': receiver,
+        'message': message,
+        'timestamp': timestamp,
+        'color': receiver_color
+    })
 def authenticate_user(username, password):
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
