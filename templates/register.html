@@ -5,48 +5,103 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>注册 - 在线聊天室</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .shake {
+            animation: shake 0.5s;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-5px); }
+            40%, 80% { transform: translateX(5px); }
+        }
+    </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
     <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
         <h1 class="text-2xl font-bold text-center mb-6">注册新账号</h1>
 
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="mb-4 p-3 bg-red-100 text-red-700 rounded">
-                    {{ messages[0] }}
-                </div>
-            {% endif %}
-        {% endwith %}
+        <!-- 错误提示 -->
+        {% if error %}
+        <div id="error-message" class="mb-4 p-3 bg-red-100 text-red-700 rounded shake">
+            {{ error }}
+        </div>
+        {% endif %}
 
-        <form method="POST" class="space-y-4">
+        <form method="POST" class="space-y-4" onsubmit="return validateForm()">
             <div>
                 <label for="username" class="block text-sm font-medium text-gray-700">用户名</label>
                 <input type="text" id="username" name="username" required
-                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                       minlength="4" maxlength="20"
+                       value="{{ request.form.username if request.form }}">
+                <p class="mt-1 text-xs text-gray-500">4-20个字符，只能包含字母、数字和下划线</p>
             </div>
 
             <div>
                 <label for="password" class="block text-sm font-medium text-gray-700">密码</label>
                 <input type="password" id="password" name="password" required
-                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                       minlength="8">
+                <p class="mt-1 text-xs text-gray-500">至少8个字符，建议包含大小写字母和数字</p>
             </div>
 
             <div>
                 <label for="invitation_code" class="block text-sm font-medium text-gray-700">邀请码</label>
                 <input type="text" id="invitation_code" name="invitation_code" required
-                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                       class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                       value="{{ request.form.invitation_code if request.form }}">
                 <p class="mt-1 text-xs text-gray-500">可用邀请码: {{ invitation_codes|join(', ') }}</p>
             </div>
 
-            <button type="submit"
-                    class="w-full bg-green-500 text-white p-2 rounded-md hover:bg-green-600">
-                注册
+            <button type="submit" id="submit-btn"
+                    class="w-full bg-green-500 text-white p-2 rounded-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                <span id="btn-text">注册</span>
+                <span id="spinner" class="hidden ml-2">
+                    <svg class="animate-spin h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
             </button>
         </form>
 
         <div class="mt-4 text-center">
-            <a href="{{ url_for('login') }}" class="text-blue-500 hover:text-blue-700">已有账号？立即登录</a>
+            <a href="{{ url_for('login') }}" class="text-blue-500 hover:text-blue-700 text-sm">已有账号？立即登录</a>
         </div>
     </div>
+
+    <script>
+        function validateForm() {
+            // 显示加载状态
+            document.getElementById('btn-text').textContent = '注册中...';
+            document.getElementById('spinner').classList.remove('hidden');
+            document.getElementById('submit-btn').disabled = true;
+            
+            // 触发错误提示动画
+            const errorMsg = document.getElementById('error-message');
+            if(errorMsg) {
+                errorMsg.classList.remove('shake');
+                void errorMsg.offsetWidth; // 触发重绘
+                errorMsg.classList.add('shake');
+            }
+            
+            // 前端验证密码强度
+            const password = document.getElementById('password').value;
+            if(password.length < 8) {
+                alert('密码长度至少8个字符');
+                return false;
+            }
+            
+            return true;
+        }
+
+        // 自动聚焦到第一个输入框
+        document.addEventListener('DOMContentLoaded', () => {
+            const usernameInput = document.getElementById('username');
+            if(usernameInput) {
+                usernameInput.focus();
+            }
+        });
+    </script>
 </body>
 </html>

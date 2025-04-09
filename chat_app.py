@@ -108,41 +108,105 @@ def login():
         if not username or not password:
             return render_template('login.html', error='用户名和密码不能为空')
         
-        with get_db_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE username = ?", (username,))
-            user = c.fetchone()
-            
-            if user and check_password_hash(user['password'], password):
-                session['username'] = username
-                return redirect(url_for('index'))
-            
-        return render_template('login.html', error='用户名或密码错误')
+        try:
+            with get_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT * FROM users WHERE username = ?", (username,))
+                user = c.fetchone()
+                
+                if user:
+                    if check_password_hash(user['password'], password):
+                        session.permanent = True
+                        session['username'] = username
+                        return redirect(url_for('index'))
+                    else:
+                        return render_template('login.html', 
+                                            error='密码错误',
+                                            request=request)
+                else:
+                    return render_template('login.html', 
+                                        error='用户不存在',
+                                        request=request)
+        
+        except Exception as e:
+            app.logger.error(f"登录错误: {str(e)}")
+            return render_template('login.html', 
+                                error='系统错误，请稍后再试',
+                                request=request)
     
-    return render_template('login.html')
+    # GET请求时清除可能的旧session
+    if 'username' in session:
+        session.pop('username', None)
+    
+    return render_template('login.html', request=request)
+
+# 在配置部分添加邀请码设置
+VALID_INVITATION_CODES = ['CHAT2023', 'WELCOME123']  # 可配置为从数据库或环境变量读取
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
+        invitation_code = request.form.get('invitation_code', '').strip()
         
-        if not username or not password:
-            return render_template('register.html', error='用户名和密码不能为空')
+        # 验证所有字段
+        if not all([username, password, invitation_code]):
+            return render_template('register.html', 
+                                error='所有字段都必须填写',
+                                invitation_codes=VALID_INVITATION_CODES)
+        
+        # 验证邀请码
+        if invitation_code not in VALID_INVITATION_CODES:
+            return render_template('register.html',
+                                error='无效的邀请码',
+                                invitation_codes=VALID_INVITATION_CODES)
+        
+        # 验证用户名复杂度
+        if len(username) < 4 or len(username) > 20:
+            return render_template('register.html',
+                                error='用户名长度需在4-20个字符之间',
+                                invitation_codes=VALID_INVITATION_CODES)
+        
+        # 验证密码强度
+        if len(password) < 8:
+            return render_template('register.html',
+                                error='密码长度至少8个字符',
+                                invitation_codes=VALID_INVITATION_CODES)
         
         try:
             with get_db_connection() as conn:
                 c = conn.cursor()
-                c.execute("INSERT INTO users (username, password) VALUES (?, ?)", 
-                         (username, generate_password_hash(password)))
+                
+                # 检查用户名是否存在
+                c.execute("SELECT id FROM users WHERE username = ?", (username,))
+                if c.fetchone():
+                    return render_template('register.html',
+                                        error='用户名已存在',
+                                        invitation_codes=VALID_INVITATION_CODES)
+                
+                # 创建用户
+                c.execute("""
+                    INSERT INTO users (username, password, invitation_code) 
+                    VALUES (?, ?, ?)
+                """, (username, generate_password_hash(password), invitation_code))
                 conn.commit()
             
+            # 注册成功后自动登录
+            session.permanent = True
             session['username'] = username
             return redirect(url_for('index'))
-        except sqlite3.IntegrityError:
-            return render_template('register.html', error='用户名已存在')
+            
+        except Exception as e:
+            app.logger.error(f"注册失败: {str(e)}")
+            return render_template('register.html',
+                                error='注册失败，请稍后再试',
+                                invitation_codes=VALID_INVITATION_CODES)
     
-    return render_template('register.html')
+    # GET请求显示注册表单
+    return render_template('register.html',
+                         invitation_codes=VALID_INVITATION_CODES)
+
 
 @app.route('/logout')
 def logout():
