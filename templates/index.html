@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <title>在线聊天室</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
@@ -97,7 +98,7 @@
                             <div class="flex items-start gap-2">
                                 <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
                                 <div class="relative">
-                                    <img src="{{ msg['message'] }}" 
+                                    <img src="https://chat.lxlxlx.xin/static/uploads/{{ msg['message'] }}" 
                                          class="max-w-xs max-h-48 rounded-lg border border-gray-200"
                                          loading="lazy"
                                          alt="用户上传图片"
@@ -248,7 +249,7 @@
                         imgContainer.className = 'relative';
                         
                         const img = document.createElement('img');
-                        img.src = data.content || '';
+                        img.src = `https://chat.lxlxlx.xin${data.content}`;
                         img.className = 'max-w-xs max-h-48 rounded-lg border border-gray-200';
                         img.loading = 'lazy';
                         img.alt = '用户上传图片';
@@ -355,7 +356,7 @@
                     const formData = new FormData();
                     formData.append('file', file);
                     
-                    fetch('/upload', {
+                    fetch('https://chat.lxlxlx.xin/upload', {
                         method: 'POST',
                         body: formData
                     })

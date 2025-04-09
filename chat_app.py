@@ -16,6 +16,10 @@ app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
 app.config['DATABASE'] = 'chat.db'
+app.config['PREFERRED_URL_SCHEME'] = 'https'  # 确保生成HTTPS链接
+
+# 配置服务器名称以确保url_for生成正确的URL
+app.config['SERVER_NAME'] = 'chat.lxlxlx.xin'
 
 # Socket.IO 配置
 socketio = SocketIO(app, 
@@ -165,16 +169,21 @@ def upload_file():
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         file.save(filepath)
         
-        # 返回干净的URL
+        # 返回HTTPS URL
         return jsonify({
-            'url': url_for('uploaded_file', filename=unique_filename, _external=True)
+            'url': f"https://chat.lxlxlx.xin/static/uploads/{unique_filename}"
         })
     
     return jsonify({'error': 'File type not allowed'}), 400
 
 @app.route('/static/uploads/<filename>')
 def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    # 设置安全头
+    response = send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "default-src 'self'"
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
 
 # Socket.IO 事件处理
 @socketio.on('connect')
