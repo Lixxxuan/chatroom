@@ -10,18 +10,16 @@ import eventlet
 eventlet.monkey_patch()
 
 # 应用配置
-app = Flask(__name__, static_folder='/var/www/chatroom/static')
+app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY') or 'dev-secret-key-123'
+app.config['UPLOAD_FOLDER'] = '/var/www/chatroom/static/uploads'  # 修改路径
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
+app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
+app.config['DATABASE'] = '/var/www/chatroom/chat.db'  # 修改路径
+app.config['PREFERRED_URL_SCHEME'] = 'https'
 
-# 新路径配置
-BASE_DIR = '/var/www/chatroom'
-app.config.update({
-    'UPLOAD_FOLDER': os.path.join(BASE_DIR, 'static/uploads'),
-    'MAX_CONTENT_LENGTH': 5 * 1024 * 1024,  # 5MB
-    'ALLOWED_EXTENSIONS': {'png', 'jpg', 'jpeg', 'gif'},
-    'DATABASE': os.path.join(BASE_DIR, 'chat.db'),
-    'PREFERRED_URL_SCHEME': 'https'
-})
+# 禁用SERVER_NAME以避免URL生成问题
+# app.config['SERVER_NAME'] = 'chat.lxlxlx.xin'
 
 # Socket.IO 配置
 socketio = SocketIO(app, 
@@ -205,21 +203,176 @@ def uploaded_file(filename):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Content-Security-Policy'] = "default-src 'self'"
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    response.headers['Cache-Control'] = 'public, max-age=31536000'
+    response.headers['Cache-Control'] = 'public, max-age=31536000'  # 1年缓存
     
     return response
 
-# Socket.IO 事件处理 [保持不变...]
+# Socket.IO 事件处理
+@socketio.on('connect')
+def handle_connect():
+    if 'username' not in session:
+        return
+    
+    sid = request.sid
+    username = session['username']
+    color = get_user_color(username)
+    
+    users[sid] = {'username': username, 'color': color}
+    online_users[username] = {'sid': sid, 'color': color}
+    
+    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+    
+    message_data = {
+        'username': '系统',
+        'content': f"{username} 加入了聊天室",
+        'timestamp': datetime.now().strftime("%H:%M:%S"),
+        'color': '#6b7280',
+        'message_type': 'system'
+    }
+    emit('new_message', message_data, broadcast=True)
+    
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?)''',
+                   ('系统', f"{username} 加入了聊天室", 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    '#6b7280', 0, 'system'))
+        conn.commit()
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    sid = request.sid
+    if sid not in users:
+        return
+    
+    username = users[sid]['username']
+    color = users[sid]['color']
+    
+    del users[sid]
+    if username in online_users:
+        del online_users[username]
+    
+    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+    
+    message_data = {
+        'username': '系统',
+        'content': f"{username} 离开了聊天室",
+        'timestamp': datetime.now().strftime("%H:%M:%S"),
+        'color': '#6b7280',
+        'message_type': 'system'
+    }
+    emit('new_message', message_data, broadcast=True)
+    
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?)''',
+                   ('系统', f"{username} 离开了聊天室", 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    '#6b7280', 0, 'system'))
+        conn.commit()
+
+@socketio.on('message')
+def handle_message(data):
+    if 'username' not in session:
+        emit('error', {'message': '未登录'})
+        return
+    
+    username = session['username']
+    color = get_user_color(username)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    if 'text' in data and data['text'].strip():
+        message_content = data['text'].strip()
+        message_type = 'text'
+        
+        message_data = {
+            'username': username,
+            'content': message_content,
+            'timestamp': timestamp,
+            'color': color,
+            'message_type': message_type
+        }
+        emit('new_message', message_data, broadcast=True)
+        
+        with get_db_connection() as conn:
+            conn.execute('''INSERT INTO messages 
+                          (username, message, timestamp, color, is_private, message_type)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                       (username, message_content, 
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        color, 0, message_type))
+            conn.commit()
+    
+    elif 'image_url' in data and data['image_url']:
+        message_content = data['image_url']
+        message_type = 'image'
+        
+        message_data = {
+            'username': username,
+            'content': message_content,
+            'timestamp': timestamp,
+            'color': color,
+            'message_type': message_type
+        }
+        emit('new_message', message_data, broadcast=True)
+        
+        with get_db_connection() as conn:
+            conn.execute('''INSERT INTO messages 
+                          (username, message, timestamp, color, is_private, message_type)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                       (username, message_content, 
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        color, 0, message_type))
+            conn.commit()
+
+@socketio.on('private_message')
+def handle_private_message(data):
+    if 'username' not in session:
+        emit('error', {'message': '未登录'})
+        return
+    
+    sender = session['username']
+    receiver = data.get('to', '').strip()
+    message = data.get('message', '').strip()
+    
+    if not receiver or not message:
+        emit('error', {'message': '缺少接收者或消息内容'})
+        return
+    
+    if receiver not in online_users:
+        emit('error', {'message': '用户不在线'})
+        return
+    
+    color = get_user_color(sender)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    emit('private_message_received', {
+        'from': sender,
+        'message': message,
+        'timestamp': timestamp,
+        'color': color
+    }, room=online_users[receiver]['sid'])
+    
+    emit('private_message_sent', {
+        'to': receiver,
+        'message': message
+    })
+    
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, target_user, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                   (sender, message, 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    color, 1, receiver, 'text'))
+        conn.commit()
 
 if __name__ == '__main__':
-    # 确保目录存在
-    os.makedirs(BASE_DIR, exist_ok=True)
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    
-    # 初始化数据库
     init_db()
     
-    # 启动应用
     socketio.run(app, 
                 host='0.0.0.0', 
                 port=5000, 
