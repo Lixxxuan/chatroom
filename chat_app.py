@@ -1,75 +1,37 @@
 import os
 import sqlite3
 from datetime import datetime
-import random
-import uuid
-from flask import Flask, render_template, request, session, redirect, url_for, flash, send_from_directory
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, request, session, redirect, url_for, jsonify, send_from_directory
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+import uuid
+import eventlet
+eventlet.monkey_patch()
 
+# 应用配置
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.secret_key = 'your-secret-key-here'
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
+app.config['DATABASE'] = 'chat.db'
 
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+# Socket.IO 配置
+socketio = SocketIO(app, 
+                   cors_allowed_origins="*",
+                   async_mode='eventlet',
+                   engineio_logger=True,
+                   logger=True)
 
-# 数据库和用户管理
+# 用户和房间管理
 users = {}          # {sid: {'username': str, 'color': str}}
 online_users = {}   # {username: {'sid': str, 'color': str}}
-INVITATION_CODES = ["CHAT2023", "WELCOME123"]
+user_colors = {}    # 用户颜色缓存
 
-def check_table_columns(table_name, required_columns):
-    """检查表是否包含所有必需的列"""
-    with sqlite3.connect('chat.db') as conn:
-        c = conn.cursor()
-        c.execute(f"PRAGMA table_info({table_name})")
-        existing_columns = [col[1] for col in c.fetchall()]
-        return all(col in existing_columns for col in required_columns)
-
-def migrate_messages_table():
-    """执行消息表迁移"""
-    print("正在执行数据库迁移...")
-    with sqlite3.connect('chat.db') as conn:
-        c = conn.cursor()
-        
-        # 1. 重命名旧表
-        c.execute("ALTER TABLE messages RENAME TO messages_old")
-        
-        # 2. 创建新表结构
-        c.execute('''CREATE TABLE messages 
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                     username TEXT, 
-                     message TEXT, 
-                     timestamp TEXT,
-                     color TEXT,
-                     is_private INTEGER DEFAULT 0,
-                     target_user TEXT DEFAULT NULL,
-                     message_type TEXT DEFAULT 'text')''')
-        
-        # 3. 迁移数据
-        c.execute('''INSERT INTO messages 
-                    (id, username, message, timestamp, color, is_private, target_user, message_type)
-                    SELECT id, username, message, timestamp, color, is_private, target_user, 
-                           CASE WHEN message LIKE '[图片]%' THEN 'image' ELSE 'text' END
-                    FROM messages_old''')
-        
-        # 4. 清理旧表
-        c.execute("DROP TABLE messages_old")
-        
-        # 5. 创建索引
-        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
-        
-        conn.commit()
-    print("数据库迁移完成")
-
+# 数据库初始化
 def init_db():
-    """初始化数据库结构"""
-    with sqlite3.connect('chat.db') as conn:
+    with sqlite3.connect(app.config['DATABASE']) as conn:
         c = conn.cursor()
         
         # 用户表
@@ -79,7 +41,7 @@ def init_db():
                      password TEXT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
-        # 消息表（新结构）
+        # 消息表
         c.execute('''CREATE TABLE IF NOT EXISTS messages 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                      username TEXT, 
@@ -90,89 +52,84 @@ def init_db():
                      target_user TEXT DEFAULT NULL,
                      message_type TEXT DEFAULT 'text')''')
         
-        # 检查是否需要迁移
-        if not check_table_columns('messages', ['message_type']):
-            migrate_messages_table()
-        else:
-            # 确保索引存在
-            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
+        # 创建索引
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
         
         conn.commit()
 
-def generate_dark_color():
-    r = random.randint(0, 180)
-    g = random.randint(0, 180)
-    b = random.randint(0, 180)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
+# 文件扩展名检查
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-# 路由
+# 生成随机颜色
+def get_user_color(username):
+    if username not in user_colors:
+        colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6']
+        user_colors[username] = colors[len(user_colors) % len(colors)]
+    return user_colors[username]
+
+# 路由部分
 @app.route('/')
 def index():
     if 'username' not in session:
         return redirect(url_for('login'))
     
-    with sqlite3.connect('chat.db') as conn:
-        conn.row_factory = sqlite3.Row  # 关键设置
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("""
-            SELECT username, message, timestamp, color, message_type
-            FROM messages 
-            WHERE is_private = 0 OR (is_private = 1 AND target_user = ?)
-            ORDER BY id DESC LIMIT 50
-        """, (session['username'],))
-        messages = c.fetchall()[::-1]
+        
+        # 获取最近的50条公共消息或发给当前用户的私信
+        c.execute('''SELECT username, message, timestamp, color, message_type 
+                     FROM messages 
+                     WHERE is_private = 0 OR (is_private = 1 AND target_user = ?)
+                     ORDER BY id DESC LIMIT 50''', (session['username'],))
+        messages = c.fetchall()[::-1]  # 反转列表使最新消息在底部
     
-    return render_template('index.html', messages=messages, username=session['username'])
-
+    return render_template('index.html', 
+                         username=session['username'],
+                         messages=messages)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
+        username = request.form['username']
+        password = request.form['password']
         
-        with sqlite3.connect('chat.db') as conn:
+        with sqlite3.connect(app.config['DATABASE']) as conn:
             c = conn.cursor()
-            c.execute("SELECT password FROM users WHERE username = ?", (username,))
-            result = c.fetchone()
+            c.execute("SELECT * FROM users WHERE username = ?", (username,))
+            user = c.fetchone()
             
-        if result and check_password_hash(result[0], password):
-            session['username'] = username
-            return redirect(url_for('index'))
-        flash('用户名或密码错误')
+            if user and check_password_hash(user[2], password):
+                session['username'] = username
+                return redirect(url_for('index'))
+            else:
+                return render_template('login.html', error='用户名或密码错误')
+    
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        invitation_code = request.form.get('invitation_code', '')
+        username = request.form['username']
+        password = generate_password_hash(request.form['password'])
         
-        if invitation_code not in INVITATION_CODES:
-            flash('邀请码无效')
-        elif len(username) < 3:
-            flash('用户名至少需要3个字符')
-        elif len(password) < 6:
-            flash('密码至少需要6个字符')
-        else:
-            try:
-                with sqlite3.connect('chat.db') as conn:
-                    c = conn.cursor()
-                    hashed_password = generate_password_hash(password)
-                    c.execute("INSERT INTO users (username, password) VALUES (?, ?)", 
-                             (username, hashed_password))
-                flash('注册成功，请登录')
-                return redirect(url_for('login'))
-            except sqlite3.IntegrityError:
-                flash('用户名已存在')
-    return render_template('register.html', invitation_codes=INVITATION_CODES)
+        try:
+            with sqlite3.connect(app.config['DATABASE']) as conn:
+                c = conn.cursor()
+                c.execute("INSERT INTO users (username, password) VALUES (?, ?)", 
+                         (username, password))
+                conn.commit()
+            
+            session['username'] = username
+            return redirect(url_for('index'))
+        except sqlite3.IntegrityError:
+            return render_template('register.html', error='用户名已存在')
+    
+    return render_template('register.html')
 
 @app.route('/logout')
 def logout():
@@ -182,179 +139,224 @@ def logout():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
-        return {'error': '没有选择文件'}, 400
+        return jsonify({'error': 'No file part'}), 400
     
     file = request.files['file']
     if file.filename == '':
-        return {'error': '没有选择文件'}, 400
+        return jsonify({'error': 'No selected file'}), 400
     
-    if not allowed_file(file.filename):
-        return {'error': '不支持的文件类型'}, 400
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        # 添加随机前缀防止文件名冲突
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        
+        # 确保上传目录存在
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        file.save(filepath)
+        
+        # 返回带前缀的URL
+        return jsonify({
+            'url': f"[图片] {url_for('static', filename=f'uploads/{unique_filename}', _external=True)}"
+        })
     
-    # 生成安全的文件名
-    filename = secure_filename(file.filename)
-    unique_filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}_{filename}"
-    save_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-    
-    # 确保上传目录存在
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    
-    # 保存文件
-    file.save(save_path)
-    
-    # 返回相对URL路径
-    image_url = f"/static/uploads/{unique_filename}"
-    return {'url': image_url}, 200
+    return jsonify({'error': 'File type not allowed'}), 400
+
+@app.route('/static/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # Socket.IO 事件处理
 @socketio.on('connect')
 def handle_connect():
-    if 'username' not in session:
-        return False
-    print(f"新连接: {session['username']}")
+    if 'username' in session:
+        sid = request.sid
+        username = session['username']
+        color = get_user_color(username)
+        
+        users[sid] = {
+            'username': username,
+            'color': color
+        }
+        online_users[username] = {
+            'sid': sid,
+            'color': color
+        }
+        
+        # 通知所有用户更新在线列表
+        emit('update_users', {
+            'users': list(online_users.keys())
+        }, broadcast=True)
+        
+        # 广播用户加入通知
+        emit('new_message', {
+            'username': '系统',
+            'content': f"{username} 加入了聊天室",
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'color': '#6b7280',
+            'type': 'system'
+        }, broadcast=True)
+        
+        # 保存到数据库
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            c = conn.cursor()
+            c.execute('''INSERT INTO messages 
+                        (username, message, timestamp, color, is_private, message_type)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                     ('系统', f"{username} 加入了聊天室", 
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      '#6b7280', 0, 'system'))
+            conn.commit()
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    if request.sid in users:
-        username = users[request.sid]['username']
-        del users[request.sid]
+    sid = request.sid
+    if sid in users:
+        username = users[sid]['username']
+        color = users[sid]['color']
+        
+        del users[sid]
         if username in online_users:
             del online_users[username]
-        emit('user_left', {'username': username}, broadcast=True)
-        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
-
-@socketio.on('join')
-def handle_join(data):
-    if 'username' not in session:
-        emit('join_error', {'error': '未登录'})
-        return
-    
-    username = session['username']
-    if username != data.get('username'):
-        emit('join_error', {'error': '用户名不匹配'})
-        return
-    
-    color = generate_dark_color()
-    users[request.sid] = {'username': username, 'color': color}
-    online_users[username] = {'sid': request.sid, 'color': color}
-    
-    timestamp = datetime.now().strftime('%H:%M:%S')
-    emit('user_joined', {
-        'username': username, 
-        'color': color,
-        'timestamp': timestamp
-    }, broadcast=True)
-    
-    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+        
+        # 更新在线列表
+        emit('update_users', {
+            'users': list(online_users.keys())
+        }, broadcast=True)
+        
+        # 广播用户离开通知
+        emit('new_message', {
+            'username': '系统',
+            'content': f"{username} 离开了聊天室",
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'color': '#6b7280',
+            'type': 'system'
+        }, broadcast=True)
+        
+        # 保存到数据库
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            c = conn.cursor()
+            c.execute('''INSERT INTO messages 
+                        (username, message, timestamp, color, is_private, message_type)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                     ('系统', f"{username} 离开了聊天室", 
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      '#6b7280', 0, 'system'))
+            conn.commit()
 
 @socketio.on('message')
 def handle_message(data):
-    if 'username' not in session or request.sid not in users:
-        emit('message_error', {'error': '未登录或未加入聊天室'})
+    if 'username' not in session:
+        emit('error', {'message': '未登录'})
         return
     
-    user = users[request.sid]
-    timestamp = datetime.now().strftime('%H:%M:%S')
+    username = session['username']
+    color = get_user_color(username)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    # 处理普通文本消息
+    if 'text' in data:
+        message_content = data['text']
+        message_type = 'text'
+        
+        # 广播消息
+        emit('new_message', {
+            'username': username,
+            'content': message_content,
+            'timestamp': timestamp,
+            'color': color,
+            'type': message_type
+        }, broadcast=True)
+        
+        # 保存到数据库
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            c = conn.cursor()
+            c.execute('''INSERT INTO messages 
+                        (username, message, timestamp, color, is_private, message_type)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                     (username, message_content, 
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      color, 0, message_type))
+            conn.commit()
     
     # 处理图片消息
-    if 'image_url' in data:
+    elif 'image_url' in data:
+        message_content = data['image_url']
         message_type = 'image'
-        content = data['image_url']
-        display_content = f"[图片] {content}"
-    else:
-        message_type = 'text'
-        content = data.get('message', '').strip()
-        display_content = content
-        if not content:
-            emit('message_error', {'error': '消息不能为空'})
-            return
-    
-    # 存储到数据库
-    with sqlite3.connect('chat.db') as conn:
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO messages (username, message, timestamp, color, is_private, message_type) 
-            VALUES (?, ?, ?, ?, 0, ?)
-        """, (user['username'], display_content, timestamp, user['color'], message_type))
-    
-    # 广播消息
-    emit('new_message', {
-        'username': user['username'],
-        'content': content if message_type == 'image' else display_content,
-        'timestamp': timestamp,
-        'color': user['color'],
-        'type': message_type
-    }, broadcast=True)
+        
+        emit('new_message', {
+            'username': username,
+            'content': message_content,
+            'timestamp': timestamp,
+            'color': color,
+            'type': message_type
+        }, broadcast=True)
+        
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            c = conn.cursor()
+            c.execute('''INSERT INTO messages 
+                        (username, message, timestamp, color, is_private, message_type)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                     (username, message_content, 
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      color, 0, message_type))
+            conn.commit()
 
 @socketio.on('private_message')
 def handle_private_message(data):
-    if 'username' not in session or request.sid not in users:
-        emit('private_message_error', {'error': '未登录或未加入聊天室'})
+    if 'username' not in session:
+        emit('error', {'message': '未登录'})
         return
     
     sender = session['username']
     receiver = data.get('to')
-    message = data.get('message', '').strip()
+    message = data.get('message')
     
-    if not message:
-        emit('private_message_error', {'error': '消息不能为空'})
+    if not receiver or not message:
+        emit('error', {'message': '缺少接收者或消息内容'})
         return
     
-    if not receiver or receiver not in online_users:
-        emit('private_message_error', {'error': '用户不存在或不在线'})
+    if receiver not in online_users:
+        emit('error', {'message': '用户不在线'})
         return
     
-    if receiver == sender:
-        emit('private_message_error', {'error': '不能给自己发送私聊消息'})
-        return
+    color = get_user_color(sender)
+    timestamp = datetime.now().strftime("%H:%M:%S")
     
-    timestamp = datetime.now().strftime('%H:%M:%S')
-    sender_color = users[request.sid]['color']
-    receiver_info = online_users[receiver]
-    
-    with sqlite3.connect('chat.db') as conn:
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO messages (username, message, timestamp, color, is_private, target_user, message_type) 
-            VALUES (?, ?, ?, ?, 1, ?, 'text')
-        """, (sender, message, timestamp, sender_color, receiver))
-    
-    # 给接收者发送消息
+    # 发送给接收者
     emit('private_message_received', {
         'from': sender,
         'message': message,
         'timestamp': timestamp,
-        'color': sender_color
-    }, room=receiver_info['sid'])
+        'color': color
+    }, room=online_users[receiver]['sid'])
     
-    # 给发送者发送回执
+    # 发送回执给发送者
     emit('private_message_sent', {
         'to': receiver,
-        'message': message,
-        'timestamp': timestamp,
-        'color': receiver_info['color']
-    }, room=request.sid)
+        'message': message
+    })
+    
+    # 保存到数据库
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        c = conn.cursor()
+        c.execute('''INSERT INTO messages 
+                    (username, message, timestamp, color, is_private, target_user, message_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                 (sender, message, 
+                  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  color, 1, receiver, 'text'))
+        conn.commit()
 
-def clean_old_files():
-    """清理30天前的上传文件"""
-    now = datetime.now().timestamp()
-    for filename in os.listdir(app.config['UPLOAD_FOLDER']):
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        if os.path.isfile(filepath):
-            file_time = os.path.getmtime(filepath)
-            if now - file_time > 30 * 86400:  # 30天
-                os.unlink(filepath)
-                print(f"已清理旧文件: {filename}")
-
+# 启动应用
 if __name__ == '__main__':
-    # 初始化数据库和上传目录
-    init_db()
+    # 确保上传目录存在
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
-    # 启动前清理旧文件
-    clean_old_files()
+    # 初始化数据库
+    init_db()
     
-    # 启动应用
+    # 启动Socket.IO应用
     socketio.run(app, 
                  host='0.0.0.0', 
                  port=5000, 
