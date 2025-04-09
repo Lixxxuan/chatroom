@@ -1,5 +1,5 @@
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit, request
+from flask import Flask, render_template, request  # 从 flask 导入 request
+from flask_socketio import SocketIO, emit
 import sqlite3
 import os
 from datetime import datetime
