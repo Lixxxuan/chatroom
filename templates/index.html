@@ -18,6 +18,12 @@
         .message-container {
             transition: all 0.3s ease;
         }
+        .user-list-item {
+            transition: background-color 0.2s;
+        }
+        .user-list-item:hover {
+            background-color: #f3f4f6;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -27,10 +33,17 @@
         <div class="flex gap-4">
             <!-- 用户列表 -->
             <div class="w-1/4 bg-white rounded-lg shadow-md p-4 h-[70vh] overflow-y-auto">
-                <h2 class="text-lg font-semibold mb-4">在线用户</h2>
+                <h2 class="text-lg font-semibold mb-4">在线用户 <span id="online-count" class="text-sm text-gray-500">(0)</span></h2>
                 <div id="user-list" class="space-y-2"></div>
                 <div id="private-chat" class="mt-4 hidden">
-                    <h3 class="font-medium mb-2">与 <span id="private-with"></span> 私聊</h3>
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-medium">与 <span id="private-with" class="font-semibold"></span> 私聊</h3>
+                        <button onclick="closePrivateChat()" class="text-gray-500 hover:text-gray-700">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
                     <div id="private-messages" class="bg-gray-50 p-2 rounded mb-2 h-48 overflow-y-auto"></div>
                     <div class="flex gap-2">
                         <input id="private-message" type="text" placeholder="输入私聊消息"
@@ -75,20 +88,37 @@
 
         // 初始化
         socket.on('connect', () => {
-            console.log('Connected to server');
+            console.log('已连接到服务器');
             username = document.getElementById('username').value.trim();
+        });
+
+        // 错误处理
+        socket.on('join_error', (error) => {
+            alert('加入聊天室失败: ' + error);
+        });
+
+        socket.on('message_error', (error) => {
+            alert('发送消息失败: ' + error);
+        });
+
+        socket.on('private_message_error', (error) => {
+            alert('私聊消息发送失败: ' + error);
         });
 
         // 用户列表更新
         socket.on('update_users', (data) => {
             const userList = document.getElementById('user-list');
             userList.innerHTML = '';
+            document.getElementById('online-count').textContent = `(${data.users.length})`;
 
             data.users.forEach(user => {
                 if (user !== username) {
                     const userElement = document.createElement('div');
-                    userElement.className = 'flex items-center justify-between p-2 hover:bg-gray-100 rounded cursor-pointer transition-colors';
-                    userElement.innerHTML = `<span>${user}</span>`;
+                    userElement.className = 'flex items-center justify-between p-2 user-list-item rounded cursor-pointer';
+                    userElement.innerHTML = `
+                        <span>${user}</span>
+                        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                    `;
                     userElement.onclick = () => startPrivateChat(user);
                     userList.appendChild(userElement);
                 }
@@ -104,6 +134,12 @@
             document.getElementById('private-message').focus();
         }
 
+        // 关闭私聊
+        function closePrivateChat() {
+            currentPrivateChat = null;
+            document.getElementById('private-chat').classList.add('hidden');
+        }
+
         // 发送私聊消息
         function sendPrivateMessage() {
             if (!currentPrivateChat) return;
@@ -115,14 +151,11 @@
                 socket.emit('private_message', {
                     to: currentPrivateChat,
                     message: message
-                }, (response) => {
-                    if (response && response.error) {
-                        console.error('私聊发送失败:', response.error);
-                    } else {
-                        addPrivateMessage(`你 -> ${currentPrivateChat}: ${message}`, 'text-blue-600', 'private-messages');
-                        input.value = '';
-                    }
                 });
+
+                // 添加到自己的私聊窗口
+                addPrivateMessage(`你 -> ${currentPrivateChat}: ${message}`, 'text-blue-600', 'private-messages');
+                input.value = '';
             }
         }
 
@@ -131,12 +164,9 @@
             const targetContainer = 'private-messages';
             addPrivateMessage(`${data.from} -> 你: ${data.message}`, `text-[${data.color}]`, targetContainer);
 
-            // 通知用户有新消息
+            // 如果当前不是和发送者的私聊窗口，显示通知
             if (currentPrivateChat !== data.from) {
-                const notification = new Notification('新私聊消息', {
-                    body: `${data.from}: ${data.message}`,
-                    icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png'
-                });
+                showNotification(`${data.from}发来私聊`, data.message);
             }
         });
 
@@ -187,28 +217,16 @@
 
             messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
-
-            // 添加动画效果
-            setTimeout(() => {
-                div.style.opacity = '1';
-                div.style.transform = 'translateY(0)';
-            }, 10);
         }
 
         // 加入聊天室
         function joinChat() {
             username = document.getElementById('username').value.trim();
             if (username) {
-                socket.emit('join', { username: username }, (response) => {
-                    if (response && response.success) {
-                        isJoined = true;
-                        document.getElementById('username').disabled = true;
-                        document.getElementById('message').focus();
-                        console.log('成功加入聊天室');
-                    } else {
-                        alert('加入聊天室失败: ' + (response?.error || '未知错误'));
-                    }
-                });
+                socket.emit('join', { username: username });
+                isJoined = true;
+                document.getElementById('username').disabled = true;
+                document.getElementById('message').focus();
             } else {
                 alert('请输入用户名');
             }
@@ -227,12 +245,25 @@
             if (message) {
                 socket.emit('message', {
                     message: message
-                }, (response) => {
-                    if (response && response.error) {
-                        console.error('消息发送失败:', response.error);
-                        alert('发送消息失败: ' + response.error);
-                    } else {
-                        input.value = '';
+                });
+                input.value = '';
+            }
+        }
+
+        // 显示通知
+        function showNotification(title, message) {
+            if (Notification.permission === 'granted') {
+                new Notification(title, {
+                    body: message,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png'
+                });
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') {
+                        new Notification(title, {
+                            body: message,
+                            icon: 'https://cdn-icons-png.flaticon.com/512/733/733585.png'
+                        });
                     }
                 });
             }
