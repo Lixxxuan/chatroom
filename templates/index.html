@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>在线聊天室</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #messages { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+        #input-area { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>在线聊天室</h1>
+    <div id="messages"></div>
+    <div id="input-area">
+        <input type="text" id="username" placeholder="输入用户名" autocomplete="off">
+        <button onclick="joinChat()">加入</button><br><br>
+        <input type="text" id="message" placeholder="输入消息" autocomplete="off">
+        <button onclick="sendMessage()">发送</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let username = '';
+
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        socket.on('user_joined', (data) => {
+            addMessage(`${data.username} 加入了聊天室`);
+        });
+
+        socket.on('user_left', (data) => {
+            addMessage(`${data.username} 离开了聊天室`);
+        });
+
+        socket.on('new_message', (data) => {
+            addMessage(`${data.username}: ${data.message}`);
+        });
+
+        function addMessage(msg) {
+            const messages = document.getElementById('messages');
+            const p = document.createElement('p');
+            p.textContent = msg;
+            messages.appendChild(p);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function joinChat() {
+            username = document.getElementById('username').value.trim();
+            if (username) {
+                socket.emit('join', { username: username });
+                document.getElementById('username').disabled = true;
+                document.getElementById('username').style.background = '#eee';
+            }
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message');
+            const message = input.value.trim();
+            if (message && username) {
+                socket.emit('message', { message: message });
+                input.value = '';
+            }
+        }
+
+        document.getElementById('message').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
