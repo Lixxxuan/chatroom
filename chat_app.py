@@ -37,19 +37,28 @@ def init_db():
                      password TEXT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-        # 消息表
+        # 消息表 - 先创建基本表结构
         c.execute('''CREATE TABLE IF NOT EXISTS messages 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                      username TEXT, 
                      message TEXT, 
                      timestamp TEXT,
-                     color TEXT,
-                     is_private INTEGER DEFAULT 0,
-                     target_user TEXT DEFAULT NULL)''')
+                     color TEXT)''')
 
-        # 创建索引提高查询性能
+        # 检查并添加 is_private 列
+        c.execute("PRAGMA table_info(messages)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'is_private' not in columns:
+            c.execute("ALTER TABLE messages ADD COLUMN is_private INTEGER DEFAULT 0")
+        if 'target_user' not in columns:
+            c.execute("ALTER TABLE messages ADD COLUMN target_user TEXT DEFAULT NULL")
+
+        # 现在可以安全地创建索引
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
+
+        # 创建其他必要的索引
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_username ON messages(username)")
 
 
 # 生成深色随机颜色
