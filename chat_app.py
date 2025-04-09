@@ -1,35 +1,86 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_socketio import SocketIO, emit
 import sqlite3
 import os
 from datetime import datetime
 import random
+import hashlib
+import secrets
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*", logger=False, engineio_logger=False)
 
+# 预定义的邀请码 (实际应用中应该存储在数据库或配置中)
+INVITATION_CODES = ["CHAT2023", "WELCOME123"]
+
 # 存储在线用户和颜色
 users = {}  # {sid: {'username': str, 'color': str}}
 
 
-# 初始化或更新数据库
+# 初始化数据库
 def init_db():
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
-    # 检查表是否存在，如果不存在则创建
+
+    # 创建用户表
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 username TEXT UNIQUE,
+                 password TEXT)''')
+
+    # 创建消息表
     c.execute('''CREATE TABLE IF NOT EXISTS messages 
                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                  username TEXT, 
                  message TEXT, 
-                 timestamp TEXT)''')
-    # 检查是否需要添加 color 列
-    c.execute("PRAGMA table_info(messages)")
-    columns = [col[1] for col in c.fetchall()]
-    if 'color' not in columns:
-        c.execute("ALTER TABLE messages ADD COLUMN color TEXT DEFAULT '#000000'")
+                 timestamp TEXT,
+                 color TEXT)''')
+
     conn.commit()
     conn.close()
+
+
+# 生成深色随机颜色
+def generate_dark_color():
+    # 限制RGB分量在0-180之间以确保颜色较深
+    r = random.randint(0, 180)
+    g = random.randint(0, 180)
+    b = random.randint(0, 180)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# 用户认证相关函数
+def register_user(username, password, invitation_code):
+    if invitation_code not in INVITATION_CODES:
+        return False, "邀请码无效"
+
+    conn = sqlite3.connect('chat.db')
+    c = conn.cursor()
+
+    try:
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)",
+                  (username, hashed_password))
+        conn.commit()
+        return True, "注册成功"
+    except sqlite3.IntegrityError:
+        return False, "用户名已存在"
+    finally:
+        conn.close()
+
+
+def authenticate_user(username, password):
+    conn = sqlite3.connect('chat.db')
+    c = conn.cursor()
+
+    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+    c.execute("SELECT username FROM users WHERE username = ? AND password = ?",
+              (username, hashed_password))
+    user = c.fetchone()
+    conn.close()
+
+    return user is not None
 
 
 # 检查数据库大小并清空
@@ -46,19 +97,64 @@ def check_and_clear_db():
     return False
 
 
+# 登录和注册路由
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        if authenticate_user(username, password):
+            session['username'] = username
+            return redirect(url_for('index'))
+        else:
+            flash('用户名或密码错误')
+
+    return render_template('login.html')
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        invitation_code = request.form['invitation_code']
+
+        success, message = register_user(username, password, invitation_code)
+        if success:
+            flash(message)
+            return redirect(url_for('login'))
+        else:
+            flash(message)
+
+    return render_template('register.html', invitation_codes=INVITATION_CODES)
+
+
+@app.route('/logout')
+def logout():
+    session.pop('username', None)
+    return redirect(url_for('login'))
+
+
 @app.route('/')
 def index():
-    check_and_clear_db()  # 检查并清空数据库
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    check_and_clear_db()
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
     c.execute("SELECT username, message, timestamp, color FROM messages ORDER BY id ASC LIMIT 50")
     messages = c.fetchall()
     conn.close()
-    return render_template('index.html', messages=messages)
+    return render_template('index.html', messages=messages, username=session['username'])
 
 
+# WebSocket 事件处理
 @socketio.on('connect')
 def handle_connect():
+    if 'username' not in session:
+        return False
     print('New connection established')
 
 
@@ -71,21 +167,26 @@ def handle_disconnect():
 
 
 @socketio.on('join')
-def handle_join(data):
-    username = data['username']
-    color = "#{:06x}".format(random.randint(0, 0xFFFFFF))  # 随机颜色
+def handle_join():
+    if 'username' not in session:
+        return False
+
+    username = session['username']
+    color = generate_dark_color()  # 使用深色
     users[request.sid] = {'username': username, 'color': color}
     emit('user_joined', {'username': username, 'color': color}, broadcast=True)
 
 
 @socketio.on('message')
 def handle_message(data):
-    user = users.get(request.sid, {'username': 'Anonymous', 'color': '#000000'})
+    if 'username' not in session or request.sid not in users:
+        return False
+
+    user = users[request.sid]
     username = user['username']
     color = user['color']
-    timestamp = datetime.now().strftime('%H:%M:%S')  # 只显示时间
+    timestamp = datetime.now().strftime('%H:%M:%S')
 
-    # 存储到数据库
     conn = sqlite3.connect('chat.db')
     c = conn.cursor()
     c.execute("INSERT INTO messages (username, message, timestamp, color) VALUES (?, ?, ?, ?)",
@@ -93,7 +194,7 @@ def handle_message(data):
     conn.commit()
     conn.close()
 
-    check_and_clear_db()  # 发送消息后检查大小
+    check_and_clear_db()
 
     emit('new_message', {
         'username': username,
