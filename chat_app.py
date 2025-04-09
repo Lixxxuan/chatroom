@@ -1,4 +1,6 @@
 import os
+import eventlet
+eventlet.monkey_patch()
 import sqlite3
 from datetime import datetime
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify, send_from_directory
@@ -6,8 +8,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
-import eventlet
-eventlet.monkey_patch()
+
 
 # 应用配置
 app = Flask(__name__)
@@ -373,8 +374,9 @@ if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     init_db()
     
-    socketio.run(app, 
-                host='0.0.0.0', 
-                port=5000, 
-                debug=True,
-                use_reloader=False)
+    with app.app_context():
+        socketio.run(app, 
+                    host='0.0.0.0', 
+                    port=5000, 
+                    debug=True,
+                    use_reloader=False)
