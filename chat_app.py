@@ -11,7 +11,7 @@ eventlet.monkey_patch()
 
 # 应用配置
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'
+app.secret_key = os.environ.get('SECRET_KEY') or 'dev-secret-key-123'
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
@@ -71,18 +71,16 @@ def get_user_color(username):
         user_colors[username] = colors[len(user_colors) % len(colors)]
     return user_colors[username]
 
-from flask import jsonify  # 确保导入jsonify
-
+# 健康检查端点
 @app.route('/health')
 def health_check():
     return jsonify({
         'status': 'healthy', 
         'websocket': True,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'online_users': len(online_users)
     })
 
-# 确保Socket.IO初始化正确
-socketio = SocketIO(app, cors_allowed_origins="*")
 # 路由部分
 @app.route('/')
 def index():
@@ -167,9 +165,9 @@ def upload_file():
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         file.save(filepath)
         
-        # 返回带前缀的URL
+        # 返回干净的URL
         return jsonify({
-            'url': f"[图片] {url_for('static', filename=f'uploads/{unique_filename}', _external=True)}"
+            'url': url_for('uploaded_file', filename=unique_filename, _external=True)
         })
     
     return jsonify({'error': 'File type not allowed'}), 400
@@ -206,7 +204,7 @@ def handle_connect():
             'content': f"{username} 加入了聊天室",
             'timestamp': datetime.now().strftime("%H:%M:%S"),
             'color': '#6b7280',
-            'type': 'system'
+            'message_type': 'system'
         }, broadcast=True)
         
         # 保存到数据库
@@ -242,7 +240,7 @@ def handle_disconnect():
             'content': f"{username} 离开了聊天室",
             'timestamp': datetime.now().strftime("%H:%M:%S"),
             'color': '#6b7280',
-            'type': 'system'
+            'message_type': 'system'
         }, broadcast=True)
         
         # 保存到数据库
@@ -277,7 +275,7 @@ def handle_message(data):
             'content': message_content,
             'timestamp': timestamp,
             'color': color,
-            'type': message_type
+            'message_type': message_type
         }, broadcast=True)
         
         # 保存到数据库
@@ -301,7 +299,7 @@ def handle_message(data):
             'content': message_content,
             'timestamp': timestamp,
             'color': color,
-            'type': message_type
+            'message_type': message_type
         }, broadcast=True)
         
         with sqlite3.connect(app.config['DATABASE']) as conn:

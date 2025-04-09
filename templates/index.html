@@ -46,6 +46,17 @@
             background-color: #F44336;
             color: white;
         }
+        .fallback-image {
+            width: 200px;
+            height: 150px;
+            background-color: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #9ca3af;
+            font-size: 12px;
+            border: 1px dashed #d1d5db;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -85,11 +96,13 @@
                         {% if msg['message_type'] == 'image' %}
                             <div class="flex items-start gap-2">
                                 <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
-                                <img src="{{ msg['message'] | replace('[图片] ', '') }}" 
-                                     class="max-w-xs max-h-48 rounded-lg border border-gray-200"
-                                     loading="lazy"
-                                     alt="用户上传图片"
-                                     onerror="this.src='https://via.placeholder.com/200x150?text=图片加载失败'">
+                                <div class="relative">
+                                    <img src="{{ msg['message'] }}" 
+                                         class="max-w-xs max-h-48 rounded-lg border border-gray-200"
+                                         loading="lazy"
+                                         alt="用户上传图片"
+                                         onerror="handleImageError(this)">
+                                </div>
                             </div>
                         {% else %}
                             <div class="flex items-start gap-2">
@@ -129,6 +142,15 @@
     </div>
 
     <script>
+        // 图片加载失败处理
+        function handleImageError(img) {
+            const container = img.parentElement;
+            const fallback = document.createElement('div');
+            fallback.className = 'fallback-image';
+            fallback.textContent = '图片加载失败';
+            container.replaceChild(fallback, img);
+        }
+
         // 安全DOM元素获取
         function getElementSafe(id) {
             const el = document.getElementById(id);
@@ -158,6 +180,7 @@
             const messagesContainer = getElementSafe('messages');
             const statusIndicator = getElementSafe('connection-status');
             const usernameDisplay = getElementSafe('username-display');
+            const imageUpload = getElementSafe('image-upload');
 
             // 连接状态管理
             function updateStatus(connected) {
@@ -220,16 +243,21 @@
                     contentDiv.appendChild(userSpan);
                     
                     // 消息内容
-                    if (data.type === 'image') {
+                    if (data.message_type === 'image') {
+                        const imgContainer = document.createElement('div');
+                        imgContainer.className = 'relative';
+                        
                         const img = document.createElement('img');
                         img.src = data.content || '';
                         img.className = 'max-w-xs max-h-48 rounded-lg border border-gray-200';
                         img.loading = 'lazy';
                         img.alt = '用户上传图片';
                         img.onerror = function() {
-                            this.src = 'https://via.placeholder.com/200x150?text=图片加载失败';
+                            handleImageError(this);
                         };
-                        contentDiv.appendChild(img);
+                        
+                        imgContainer.appendChild(img);
+                        contentDiv.appendChild(imgContainer);
                     } else {
                         const textP = document.createElement('p');
                         textP.className = 'text-gray-800 bg-gray-50 p-2 rounded-lg';
@@ -276,7 +304,8 @@
                     if (!messageInput?.value.trim()) return;
                     
                     socket.emit('message', { 
-                        text: messageInput.value 
+                        text: messageInput.value,
+                        type: 'text'
                     }, (ack) => {
                         if (ack?.error) {
                             console.error('消息发送失败:', ack.error);
@@ -298,7 +327,6 @@
             }
 
             // 图片上传处理
-            const imageUpload = getElementSafe('image-upload');
             if (imageUpload) {
                 imageUpload.addEventListener('change', function(e) {
                     const file = e.target.files[0];
@@ -331,17 +359,25 @@
                         method: 'POST',
                         body: formData
                     })
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('上传失败: ' + response.statusText);
+                        }
+                        return response.json();
+                    })
                     .then(data => {
                         if (data.url) {
-                            socket.emit('message', { image_url: data.url });
+                            socket.emit('message', { 
+                                image_url: data.url,
+                                type: 'image'
+                            });
                         } else if (data.error) {
-                            alert('上传失败: ' + data.error);
+                            throw new Error(data.error);
                         }
                     })
                     .catch(error => {
                         console.error('上传失败:', error);
-                        alert('上传过程中发生错误');
+                        alert('上传失败: ' + error.message);
                     })
                     .finally(() => {
                         if (progressContainer) {
