@@ -1,21 +1,39 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>在线聊天室</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #messages { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
-        #input-area { margin-top: 10px; }
+        #messages::-webkit-scrollbar { width: 8px; }
+        #messages::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        #messages::-webkit-scrollbar-thumb:hover { background: #555; }
     </style>
 </head>
-<body>
-    <h1>在线聊天室</h1>
-    <div id="messages"></div>
-    <div id="input-area">
-        <input type="text" id="username" placeholder="输入用户名" autocomplete="off">
-        <button onclick="joinChat()">加入</button><br><br>
-        <input type="text" id="message" placeholder="输入消息" autocomplete="off">
-        <button onclick="sendMessage()">发送</button>
+<body class="bg-gray-100 flex flex-col min-h-screen">
+    <div class="flex-1 container mx-auto p-4 max-w-3xl">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">在线聊天室</h1>
+        <div id="messages" class="bg-white rounded-lg shadow-md p-4 h-[70vh] overflow-y-auto flex flex-col gap-4">
+            {% for username, message, timestamp in messages %}
+                <div class="flex flex-col">
+                    <span class="text-sm text-gray-500">{{ timestamp }} - {{ username }}</span>
+                    <p class="text-gray-800 bg-gray-50 p-2 rounded-lg">{{ message }}</p>
+                </div>
+            {% endfor %}
+        </div>
+        <div class="mt-4 flex flex-col gap-4">
+            <div class="flex gap-2">
+                <input id="username" type="text" placeholder="输入用户名" autocomplete="off"
+                       class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="joinChat()" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">加入</button>
+            </div>
+            <div class="flex gap-2">
+                <input id="message" type="text" placeholder="输入消息" autocomplete="off"
+                       class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="sendMessage()" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">发送</button>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
@@ -28,22 +46,24 @@
         });
 
         socket.on('user_joined', (data) => {
-            addMessage(`${data.username} 加入了聊天室`);
+            addMessage(`${data.username} 加入了聊天室`, 'text-blue-500');
         });
 
         socket.on('user_left', (data) => {
-            addMessage(`${data.username} 离开了聊天室`);
+            addMessage(`${data.username} 离开了聊天室`, 'text-red-500');
         });
 
         socket.on('new_message', (data) => {
-            addMessage(`${data.username}: ${data.message}`);
+            addMessage(`${data.timestamp} - ${data.username}: ${data.message}`);
         });
 
-        function addMessage(msg) {
+        function addMessage(msg, extraClass = '') {
             const messages = document.getElementById('messages');
-            const p = document.createElement('p');
-            p.textContent = msg;
-            messages.appendChild(p);
+            const div = document.createElement('div');
+            div.className = `flex flex-col ${extraClass}`;
+            div.innerHTML = `<span class="text-sm text-gray-500">${msg.split(':')[0]}</span>
+                           <p class="text-gray-800 bg-gray-50 p-2 rounded-lg">${msg.split(':').slice(1).join(':')}</p>`;
+            messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
         }
 
@@ -52,7 +72,7 @@
             if (username) {
                 socket.emit('join', { username: username });
                 document.getElementById('username').disabled = true;
-                document.getElementById('username').style.background = '#eee';
+                document.getElementById('username').classList.add('bg-gray-200');
             }
         }
 
