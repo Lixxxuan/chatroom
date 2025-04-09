@@ -98,7 +98,7 @@
                             <div class="flex items-start gap-2">
                                 <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
                                 <div class="relative">
-                                    <img src="{{ msg['message'].startswith('http') ? msg['message'] : 'https://chat.lxlxlx.xin' + msg['message'] }}" 
+                                    <img src="{% if msg['message'].startswith('http') %}{{ msg['message'] }}{% else %}https://chat.lxlxlx.xin{{ msg['message'] }}{% endif %}" 
                                          class="max-w-xs max-h-48 rounded-lg border border-gray-200"
                                          loading="lazy"
                                          alt="用户上传图片"

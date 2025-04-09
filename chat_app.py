@@ -17,13 +17,14 @@ app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
 app.config['DATABASE'] = 'chat.db'
 app.config['PREFERRED_URL_SCHEME'] = 'https'
-app.config['SERVER_NAME'] = 'chat.lxlxlx.xin'
+
+# 禁用SERVER_NAME以避免URL生成问题
+# app.config['SERVER_NAME'] = 'chat.lxlxlx.xin'
 
 # Socket.IO 配置
 socketio = SocketIO(app, 
                    cors_allowed_origins="*",
                    async_mode='eventlet',
-                   engineio_logger=True,
                    logger=True)
 
 # 用户和房间管理
@@ -31,19 +32,22 @@ users = {}          # {sid: {'username': str, 'color': str}}
 online_users = {}   # {username: {'sid': str, 'color': str}}
 user_colors = {}    # 用户颜色缓存
 
+def get_db_connection():
+    conn = sqlite3.connect(app.config['DATABASE'])
+    conn.row_factory = sqlite3.Row
+    return conn
+
 # 数据库初始化
 def init_db():
-    with sqlite3.connect(app.config['DATABASE']) as conn:
+    with get_db_connection() as conn:
         c = conn.cursor()
         
-        # 用户表
         c.execute('''CREATE TABLE IF NOT EXISTS users 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      username TEXT UNIQUE,
                      password TEXT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
-        # 消息表
         c.execute('''CREATE TABLE IF NOT EXISTS messages 
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                      username TEXT, 
@@ -54,7 +58,6 @@ def init_db():
                      target_user TEXT DEFAULT NULL,
                      message_type TEXT DEFAULT 'text')''')
         
-        # 创建索引
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
@@ -73,66 +76,64 @@ def get_user_color(username):
         user_colors[username] = colors[len(user_colors) % len(colors)]
     return user_colors[username]
 
-# 健康检查端点
-@app.route('/health')
-def health_check():
-    return jsonify({
-        'status': 'healthy', 
-        'websocket': True,
-        'timestamp': datetime.now().isoformat(),
-        'online_users': len(online_users)
-    })
-
-# 路由部分
 @app.route('/')
 def index():
     if 'username' not in session:
         return redirect(url_for('login'))
     
-    with sqlite3.connect(app.config['DATABASE']) as conn:
-        conn.row_factory = sqlite3.Row
+    with get_db_connection() as conn:
         c = conn.cursor()
-        
         c.execute('''SELECT username, message, timestamp, color, message_type 
                      FROM messages 
                      WHERE is_private = 0 OR (is_private = 1 AND target_user = ?)
                      ORDER BY id DESC LIMIT 50''', (session['username'],))
-        messages = c.fetchall()[::-1]
+        messages = [dict(row) for row in c.fetchall()][::-1]
     
-    return render_template('index.html', 
+    # 预处理消息中的图片URL
+    for msg in messages:
+        if msg['message_type'] == 'image' and not msg['message'].startswith('http'):
+            msg['message'] = f"/static/uploads/{os.path.basename(msg['message'])}"
+    
+    return render_template('index.html',
                          username=session['username'],
                          messages=messages)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
         
-        with sqlite3.connect(app.config['DATABASE']) as conn:
+        if not username or not password:
+            return render_template('login.html', error='用户名和密码不能为空')
+        
+        with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT * FROM users WHERE username = ?", (username,))
             user = c.fetchone()
             
-            if user and check_password_hash(user[2], password):
+            if user and check_password_hash(user['password'], password):
                 session['username'] = username
                 return redirect(url_for('index'))
-            else:
-                return render_template('login.html', error='用户名或密码错误')
+            
+        return render_template('login.html', error='用户名或密码错误')
     
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username']
-        password = generate_password_hash(request.form['password'])
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        
+        if not username or not password:
+            return render_template('register.html', error='用户名和密码不能为空')
         
         try:
-            with sqlite3.connect(app.config['DATABASE']) as conn:
+            with get_db_connection() as conn:
                 c = conn.cursor()
                 c.execute("INSERT INTO users (username, password) VALUES (?, ?)", 
-                         (username, password))
+                         (username, generate_password_hash(password)))
                 conn.commit()
             
             session['username'] = username
@@ -164,7 +165,6 @@ def upload_file():
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         file.save(filepath)
         
-        # 返回相对路径，由前端拼接完整URL
         return jsonify({
             'url': f"/static/uploads/{unique_filename}"
         })
@@ -182,64 +182,68 @@ def uploaded_file(filename):
 # Socket.IO 事件处理
 @socketio.on('connect')
 def handle_connect():
-    if 'username' in session:
-        sid = request.sid
-        username = session['username']
-        color = get_user_color(username)
-        
-        users[sid] = {'username': username, 'color': color}
-        online_users[username] = {'sid': sid, 'color': color}
-        
-        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
-        
-        emit('new_message', {
-            'username': '系统',
-            'content': f"{username} 加入了聊天室",
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'color': '#6b7280',
-            'message_type': 'system'
-        }, broadcast=True)
-        
-        with sqlite3.connect(app.config['DATABASE']) as conn:
-            c = conn.cursor()
-            c.execute('''INSERT INTO messages 
-                        (username, message, timestamp, color, is_private, message_type)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     ('系统', f"{username} 加入了聊天室", 
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                      '#6b7280', 0, 'system'))
-            conn.commit()
+    if 'username' not in session:
+        return
+    
+    sid = request.sid
+    username = session['username']
+    color = get_user_color(username)
+    
+    users[sid] = {'username': username, 'color': color}
+    online_users[username] = {'sid': sid, 'color': color}
+    
+    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+    
+    message_data = {
+        'username': '系统',
+        'content': f"{username} 加入了聊天室",
+        'timestamp': datetime.now().strftime("%H:%M:%S"),
+        'color': '#6b7280',
+        'message_type': 'system'
+    }
+    emit('new_message', message_data, broadcast=True)
+    
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?)''',
+                   ('系统', f"{username} 加入了聊天室", 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    '#6b7280', 0, 'system'))
+        conn.commit()
 
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
-    if sid in users:
-        username = users[sid]['username']
-        color = users[sid]['color']
-        
-        del users[sid]
-        if username in online_users:
-            del online_users[username]
-        
-        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
-        
-        emit('new_message', {
-            'username': '系统',
-            'content': f"{username} 离开了聊天室",
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'color': '#6b7280',
-            'message_type': 'system'
-        }, broadcast=True)
-        
-        with sqlite3.connect(app.config['DATABASE']) as conn:
-            c = conn.cursor()
-            c.execute('''INSERT INTO messages 
-                        (username, message, timestamp, color, is_private, message_type)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     ('系统', f"{username} 离开了聊天室", 
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                      '#6b7280', 0, 'system'))
-            conn.commit()
+    if sid not in users:
+        return
+    
+    username = users[sid]['username']
+    color = users[sid]['color']
+    
+    del users[sid]
+    if username in online_users:
+        del online_users[username]
+    
+    emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
+    
+    message_data = {
+        'username': '系统',
+        'content': f"{username} 离开了聊天室",
+        'timestamp': datetime.now().strftime("%H:%M:%S"),
+        'color': '#6b7280',
+        'message_type': 'system'
+    }
+    emit('new_message', message_data, broadcast=True)
+    
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?)''',
+                   ('系统', f"{username} 离开了聊天室", 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    '#6b7280', 0, 'system'))
+        conn.commit()
 
 @socketio.on('message')
 def handle_message(data):
@@ -251,48 +255,48 @@ def handle_message(data):
     color = get_user_color(username)
     timestamp = datetime.now().strftime("%H:%M:%S")
     
-    if 'text' in data:
-        message_content = data['text']
+    if 'text' in data and data['text'].strip():
+        message_content = data['text'].strip()
         message_type = 'text'
         
-        emit('new_message', {
+        message_data = {
             'username': username,
             'content': message_content,
             'timestamp': timestamp,
             'color': color,
             'message_type': message_type
-        }, broadcast=True)
+        }
+        emit('new_message', message_data, broadcast=True)
         
-        with sqlite3.connect(app.config['DATABASE']) as conn:
-            c = conn.cursor()
-            c.execute('''INSERT INTO messages 
-                        (username, message, timestamp, color, is_private, message_type)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     (username, message_content, 
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                      color, 0, message_type))
+        with get_db_connection() as conn:
+            conn.execute('''INSERT INTO messages 
+                          (username, message, timestamp, color, is_private, message_type)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                       (username, message_content, 
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        color, 0, message_type))
             conn.commit()
     
-    elif 'image_url' in data:
+    elif 'image_url' in data and data['image_url']:
         message_content = data['image_url']
         message_type = 'image'
         
-        emit('new_message', {
+        message_data = {
             'username': username,
             'content': message_content,
             'timestamp': timestamp,
             'color': color,
             'message_type': message_type
-        }, broadcast=True)
+        }
+        emit('new_message', message_data, broadcast=True)
         
-        with sqlite3.connect(app.config['DATABASE']) as conn:
-            c = conn.cursor()
-            c.execute('''INSERT INTO messages 
-                        (username, message, timestamp, color, is_private, message_type)
-                        VALUES (?, ?, ?, ?, ?, ?)''',
-                     (username, message_content, 
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                      color, 0, message_type))
+        with get_db_connection() as conn:
+            conn.execute('''INSERT INTO messages 
+                          (username, message, timestamp, color, is_private, message_type)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                       (username, message_content, 
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        color, 0, message_type))
             conn.commit()
 
 @socketio.on('private_message')
@@ -302,8 +306,8 @@ def handle_private_message(data):
         return
     
     sender = session['username']
-    receiver = data.get('to')
-    message = data.get('message')
+    receiver = data.get('to', '').strip()
+    message = data.get('message', '').strip()
     
     if not receiver or not message:
         emit('error', {'message': '缺少接收者或消息内容'})
@@ -328,24 +332,21 @@ def handle_private_message(data):
         'message': message
     })
     
-    with sqlite3.connect(app.config['DATABASE']) as conn:
-        c = conn.cursor()
-        c.execute('''INSERT INTO messages 
-                    (username, message, timestamp, color, is_private, target_user, message_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                 (sender, message, 
-                  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                  color, 1, receiver, 'text'))
+    with get_db_connection() as conn:
+        conn.execute('''INSERT INTO messages 
+                      (username, message, timestamp, color, is_private, target_user, message_type)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                   (sender, message, 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    color, 1, receiver, 'text'))
         conn.commit()
 
-# 启动应用
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     init_db()
     
     socketio.run(app, 
-                 host='0.0.0.0', 
-                 port=5000, 
-                 debug=True,
-                 use_reloader=False,
-                 allow_unsafe_werkzeug=True)
+                host='0.0.0.0', 
+                port=5000, 
+                debug=True,
+                use_reloader=False)
