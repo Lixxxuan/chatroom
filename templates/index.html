@@ -60,24 +60,22 @@
 
             <!-- 主聊天区 -->
             <div class="flex-1">
-                <div id="messages" class="bg-white rounded-lg shadow-md p-4 h-[70vh] overflow-y-auto flex flex-col gap-4">
-                    {% for username, message, timestamp, color in messages %}
-                        <div class="flex flex-col message-container">
-                            <span class="text-xs text-gray-500">{{ timestamp }}</span>
-                            {% if message.startswith('[图片]') %}
-                                {% set image_url = message.split('[图片] ')[1] %}
-                                <div class="flex items-start gap-2">
-                                    <span class="font-medium" style="color: {{ color }}">{{ username }}:</span>
-                                    <img src="{{ image_url }}" class="max-w-xs max-h-48 rounded-lg border border-gray-200" loading="lazy">
-                                </div>
-                            {% else %}
-                                <div class="flex items-start gap-2">
-                                    <span class="font-medium" style="color: {{ color }}">{{ username }}:</span>
-                                    <p class="text-gray-800 bg-gray-50 p-2 rounded-lg">{{ message }}</p>
-                                </div>
-                            {% endif %}
-                        </div>
-                    {% endfor %}
+                {% for msg in messages %}
+    <div class="flex flex-col message-container">
+        <span class="text-xs text-gray-500">{{ msg['timestamp'] }}</span>
+        {% if msg['message_type'] == 'image' %}
+            <div class="flex items-start gap-2">
+                <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
+                <img src="{{ msg['message'] | replace('[图片] ', '') }}" class="max-w-xs max-h-48 rounded-lg border border-gray-200">
+            </div>
+        {% else %}
+            <div class="flex items-start gap-2">
+                <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
+                <p class="text-gray-800 bg-gray-50 p-2 rounded-lg">{{ msg['message'] }}</p>
+            </div>
+        {% endif %}
+    </div>
+{% endfor %}
                 </div>
 
                 <!-- 上传进度条 -->

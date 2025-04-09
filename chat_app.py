@@ -118,9 +118,10 @@ def index():
         return redirect(url_for('login'))
     
     with sqlite3.connect('chat.db') as conn:
+        conn.row_factory = sqlite3.Row  # 关键设置
         c = conn.cursor()
         c.execute("""
-            SELECT username, message, timestamp, color, message_type 
+            SELECT username, message, timestamp, color, message_type
             FROM messages 
             WHERE is_private = 0 OR (is_private = 1 AND target_user = ?)
             ORDER BY id DESC LIMIT 50
@@ -128,6 +129,7 @@ def index():
         messages = c.fetchall()[::-1]
     
     return render_template('index.html', messages=messages, username=session['username'])
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
