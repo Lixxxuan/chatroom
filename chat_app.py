@@ -16,9 +16,7 @@ app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
 app.config['DATABASE'] = 'chat.db'
-app.config['PREFERRED_URL_SCHEME'] = 'https'  # 确保生成HTTPS链接
-
-# 配置服务器名称以确保url_for生成正确的URL
+app.config['PREFERRED_URL_SCHEME'] = 'https'
 app.config['SERVER_NAME'] = 'chat.lxlxlx.xin'
 
 # Socket.IO 配置
@@ -95,12 +93,11 @@ def index():
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         
-        # 获取最近的50条公共消息或发给当前用户的私信
         c.execute('''SELECT username, message, timestamp, color, message_type 
                      FROM messages 
                      WHERE is_private = 0 OR (is_private = 1 AND target_user = ?)
                      ORDER BY id DESC LIMIT 50''', (session['username'],))
-        messages = c.fetchall()[::-1]  # 反转列表使最新消息在底部
+        messages = c.fetchall()[::-1]
     
     return render_template('index.html', 
                          username=session['username'],
@@ -161,24 +158,21 @@ def upload_file():
     
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
-        # 添加随机前缀防止文件名冲突
         unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
         
-        # 确保上传目录存在
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         file.save(filepath)
         
-        # 返回HTTPS URL
+        # 返回相对路径，由前端拼接完整URL
         return jsonify({
-            'url': f"https://chat.lxlxlx.xin/static/uploads/{unique_filename}"
+            'url': f"/static/uploads/{unique_filename}"
         })
     
     return jsonify({'error': 'File type not allowed'}), 400
 
 @app.route('/static/uploads/<filename>')
 def uploaded_file(filename):
-    # 设置安全头
     response = send_from_directory(app.config['UPLOAD_FOLDER'], filename)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Content-Security-Policy'] = "default-src 'self'"
@@ -193,21 +187,11 @@ def handle_connect():
         username = session['username']
         color = get_user_color(username)
         
-        users[sid] = {
-            'username': username,
-            'color': color
-        }
-        online_users[username] = {
-            'sid': sid,
-            'color': color
-        }
+        users[sid] = {'username': username, 'color': color}
+        online_users[username] = {'sid': sid, 'color': color}
         
-        # 通知所有用户更新在线列表
-        emit('update_users', {
-            'users': list(online_users.keys())
-        }, broadcast=True)
+        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
         
-        # 广播用户加入通知
         emit('new_message', {
             'username': '系统',
             'content': f"{username} 加入了聊天室",
@@ -216,7 +200,6 @@ def handle_connect():
             'message_type': 'system'
         }, broadcast=True)
         
-        # 保存到数据库
         with sqlite3.connect(app.config['DATABASE']) as conn:
             c = conn.cursor()
             c.execute('''INSERT INTO messages 
@@ -238,12 +221,8 @@ def handle_disconnect():
         if username in online_users:
             del online_users[username]
         
-        # 更新在线列表
-        emit('update_users', {
-            'users': list(online_users.keys())
-        }, broadcast=True)
+        emit('update_users', {'users': list(online_users.keys())}, broadcast=True)
         
-        # 广播用户离开通知
         emit('new_message', {
             'username': '系统',
             'content': f"{username} 离开了聊天室",
@@ -252,7 +231,6 @@ def handle_disconnect():
             'message_type': 'system'
         }, broadcast=True)
         
-        # 保存到数据库
         with sqlite3.connect(app.config['DATABASE']) as conn:
             c = conn.cursor()
             c.execute('''INSERT INTO messages 
@@ -273,12 +251,10 @@ def handle_message(data):
     color = get_user_color(username)
     timestamp = datetime.now().strftime("%H:%M:%S")
     
-    # 处理普通文本消息
     if 'text' in data:
         message_content = data['text']
         message_type = 'text'
         
-        # 广播消息
         emit('new_message', {
             'username': username,
             'content': message_content,
@@ -287,7 +263,6 @@ def handle_message(data):
             'message_type': message_type
         }, broadcast=True)
         
-        # 保存到数据库
         with sqlite3.connect(app.config['DATABASE']) as conn:
             c = conn.cursor()
             c.execute('''INSERT INTO messages 
@@ -298,7 +273,6 @@ def handle_message(data):
                       color, 0, message_type))
             conn.commit()
     
-    # 处理图片消息
     elif 'image_url' in data:
         message_content = data['image_url']
         message_type = 'image'
@@ -342,7 +316,6 @@ def handle_private_message(data):
     color = get_user_color(sender)
     timestamp = datetime.now().strftime("%H:%M:%S")
     
-    # 发送给接收者
     emit('private_message_received', {
         'from': sender,
         'message': message,
@@ -350,13 +323,11 @@ def handle_private_message(data):
         'color': color
     }, room=online_users[receiver]['sid'])
     
-    # 发送回执给发送者
     emit('private_message_sent', {
         'to': receiver,
         'message': message
     })
     
-    # 保存到数据库
     with sqlite3.connect(app.config['DATABASE']) as conn:
         c = conn.cursor()
         c.execute('''INSERT INTO messages 
@@ -369,13 +340,9 @@ def handle_private_message(data):
 
 # 启动应用
 if __name__ == '__main__':
-    # 确保上传目录存在
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    
-    # 初始化数据库
     init_db()
     
-    # 启动Socket.IO应用
     socketio.run(app, 
                  host='0.0.0.0', 
                  port=5000, 

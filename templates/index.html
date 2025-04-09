@@ -98,7 +98,7 @@
                             <div class="flex items-start gap-2">
                                 <span class="font-medium" style="color: {{ msg['color'] }}">{{ msg['username'] }}:</span>
                                 <div class="relative">
-                                    <img src="https://chat.lxlxlx.xin/static/uploads/{{ msg['message'] }}" 
+                                    <img src="{{ msg['message'].startswith('http') ? msg['message'] : 'https://chat.lxlxlx.xin' + msg['message'] }}" 
                                          class="max-w-xs max-h-48 rounded-lg border border-gray-200"
                                          loading="lazy"
                                          alt="用户上传图片"
@@ -157,6 +157,13 @@
             const el = document.getElementById(id);
             if (!el) console.error(`元素 ${id} 未找到`);
             return el;
+        }
+
+        // 确保URL格式正确
+        function ensureAbsoluteUrl(url) {
+            if (!url) return '';
+            if (url.startsWith('http')) return url;
+            return `https://chat.lxlxlx.xin${url.startsWith('/') ? url : '/' + url}`;
         }
 
         // 初始化Socket.IO连接
@@ -249,7 +256,7 @@
                         imgContainer.className = 'relative';
                         
                         const img = document.createElement('img');
-                        img.src = `https://chat.lxlxlx.xin${data.content}`;
+                        img.src = ensureAbsoluteUrl(data.content);
                         img.className = 'max-w-xs max-h-48 rounded-lg border border-gray-200';
                         img.loading = 'lazy';
                         img.alt = '用户上传图片';
