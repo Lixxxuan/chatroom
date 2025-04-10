@@ -274,7 +274,7 @@
                     </button>
                     <button id="close-button">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-inology-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                         </svg>
                     </button>
                 </div>
@@ -301,7 +301,21 @@
         let currentPrivateChat = null;
         let unreadMessages = {};
         let chatInitialized = false;
-    
+
+        // 安全获取 DOM 元素
+        function getElementSafe(id) {
+            const el = document.getElementById(id);
+            if (!el) console.error(`元素 ${id} 未找到`);
+            return el;
+        }
+
+        // 确保 URL 格式正确
+        function ensureAbsoluteUrl(url) {
+            if (!url) return '';
+            if (url.startsWith('http')) return url;
+            return `https://chat.lxlxlx.xin${url.startsWith('/') ? url : '/' + url}`;
+        }
+
         // 图片加载失败处理
         function handleImageError(img) {
             const container = img.parentElement;
@@ -310,25 +324,11 @@
             fallback.textContent = '图片加载失败';
             container.replaceChild(fallback, img);
         }
-    
-        // 安全DOM元素获取
-        function getElementSafe(id) {
-            const el = document.getElementById(id);
-            if (!el) console.error(`元素 ${id} 未找到`);
-            return el;
-        }
-    
-        // 确保URL格式正确
-        function ensureAbsoluteUrl(url) {
-            if (!url) return '';
-            if (url.startsWith('http')) return url;
-            return `https://chat.lxlxlx.xin${url.startsWith('/') ? url : '/' + url}`;
-        }
-    
-        // 初始化Socket.IO连接
+
+        // 初始化 Socket.IO 连接
         function initSocket() {
             if (socket) return socket;
-            
+
             socket = io('https://chat.lxlxlx.xin', {
                 path: '/socket.io',
                 transports: ['websocket', 'polling'],
@@ -342,86 +342,76 @@
                 secure: true,
                 rejectUnauthorized: false
             });
-    
+
             // 连接状态管理
             function updateStatus(connected) {
                 const statusIndicator = getElementSafe('connection-status');
                 if (!statusIndicator) return;
-                
+
                 statusIndicator.className = `connection-status ${connected ? 'connected' : 'disconnected'}`;
                 statusIndicator.textContent = connected ? '已连接' : '连接断开，正在重试...';
             }
-    
-            // 事件监听器
+
             socket.on('connect', () => {
                 console.log('WebSocket连接成功');
                 updateStatus(true);
-                
-                // 安全获取用户名
+
                 const usernameDisplay = getElementSafe('username-display');
                 const username = usernameDisplay ? usernameDisplay.textContent.trim() : '匿名用户';
                 socket.emit('join', { username });
             });
-    
+
             socket.on('disconnect', (reason) => {
                 console.log('连接断开:', reason);
                 updateStatus(false);
-                
+
                 if (reason === 'io server disconnect') {
-                    // 服务器主动断开，需要手动重连
                     socket.connect();
                 }
             });
-    
+
             socket.on('connect_error', (error) => {
                 console.error('连接错误:', error);
                 updateStatus(false);
             });
-    
+
             socket.on('error', (error) => {
                 console.error('Socket错误:', error);
             });
-    
-            // 消息处理
+
             socket.on('new_message', (data) => {
                 try {
                     const messagesContainer = getElementSafe('messages');
                     if (!messagesContainer) return;
-                    
+
                     const messageDiv = document.createElement('div');
                     messageDiv.className = 'flex flex-col message-container';
-                    
-                    // 时间戳
+
                     const timeSpan = document.createElement('span');
                     timeSpan.className = 'text-xs text-gray-500';
                     timeSpan.textContent = data.timestamp || new Date().toLocaleTimeString();
-                    
-                    // 内容容器
+
                     const contentDiv = document.createElement('div');
                     contentDiv.className = 'flex items-start gap-2';
-                    
-                    // 用户名
+
                     const userSpan = document.createElement('span');
                     userSpan.className = 'font-medium';
                     userSpan.style.color = data.color || '#3b82f6';
                     userSpan.textContent = `${data.username || '匿名用户'}:`;
-                    
+
                     contentDiv.appendChild(userSpan);
-                    
-                    // 消息内容
+
                     if (data.message_type === 'image') {
                         const imgContainer = document.createElement('div');
                         imgContainer.className = 'relative';
-                        
+
                         const img = document.createElement('img');
                         img.src = ensureAbsoluteUrl(data.content);
                         img.className = 'max-w-xs max-h-48 rounded-lg border border-gray-200';
                         img.loading = 'lazy';
                         img.alt = '用户上传图片';
-                        img.onerror = function() {
-                            handleImageError(this);
-                        };
-                        
+                        img.onerror = function() { handleImageError(this); };
+
                         imgContainer.appendChild(img);
                         contentDiv.appendChild(imgContainer);
                     } else {
@@ -430,7 +420,7 @@
                         textP.textContent = data.content || '';
                         contentDiv.appendChild(textP);
                     }
-                    
+
                     messageDiv.appendChild(timeSpan);
                     messageDiv.appendChild(contentDiv);
                     messagesContainer.appendChild(messageDiv);
@@ -439,16 +429,15 @@
                     console.error('消息渲染错误:', e);
                 }
             });
-    
-            // 用户列表更新
+
             socket.on('update_users', (data) => {
                 const userList = getElementSafe('user-list');
                 const onlineCount = getElementSafe('online-count');
-                
+
                 if (userList && onlineCount) {
                     userList.innerHTML = '';
                     onlineCount.textContent = `(${data.users?.length || 0})`;
-                    
+
                     const usernameDisplay = getElementSafe('username-display');
                     data.users?.forEach(user => {
                         if (user !== usernameDisplay?.textContent.trim()) {
@@ -464,28 +453,23 @@
                     });
                 }
             });
-    
+
             return socket;
         }
-    
+
         // 初始化私聊功能
         function initPrivateChat() {
             if (!socket) return;
-            
-            // 移除旧的监听器避免重复
+
             socket.off('private_message_received');
             socket.off('private_message_sent');
-            
+
             socket.on('private_message_received', (data) => {
                 if (currentPrivateChat !== data.from) {
-                    // 如果不是当前打开的聊天，增加未读计数
-                    if (!unreadMessages[data.from]) {
-                        unreadMessages[data.from] = 0;
-                    }
+                    if (!unreadMessages[data.from]) unreadMessages[data.from] = 0;
                     unreadMessages[data.from]++;
                     updateUnreadCount();
-                    
-                    // 显示通知
+
                     if (Notification.permission === 'granted') {
                         new Notification(`来自 ${data.from} 的新消息`, {
                             body: data.message,
@@ -493,43 +477,44 @@
                         });
                     }
                 }
-                
-                // 如果聊天窗口是打开的，显示消息
+
                 if (currentPrivateChat === data.from) {
                     appendPrivateMessage(data.from, data.message, data.timestamp, false);
                 }
             });
-            
+
             socket.on('private_message_sent', (data) => {
                 if (currentPrivateChat === data.to) {
                     appendPrivateMessage('你', data.message, data.timestamp, true);
                 }
             });
         }
-    
+
         // 启动私聊
         function startPrivateChat(withUser) {
             currentPrivateChat = withUser;
-            
-            // 重置未读计数
+
             if (unreadMessages[withUser]) {
                 unreadMessages[withUser] = 0;
                 updateUnreadCount();
             }
-            
-            // 更新UI
-            getElementSafe('private-with').textContent = withUser;
-            getElementSafe('minimized-with').textContent = `私聊: ${withUser}`;
+
+            const privateWith = getElementSafe('private-with');
+            const minimizedWith = getElementSafe('minimized-with');
             const privateChat = getElementSafe('private-chat');
             const minimizedChat = getElementSafe('private-chat-minimized');
+
+            if (privateWith) privateWith.textContent = withUser;
+            if (minimizedWith) minimizedWith.textContent = `私聊: ${withUser}`;
             if (privateChat && minimizedChat) {
-                privateChat.style.display = 'flex'; // 强制显示
+                privateChat.style.display = 'flex';
                 minimizedChat.style.display = 'none';
             }
             getElementSafe('private-messages').innerHTML = '';
             getElementSafe('private-message').focus();
-            
-            // 加载历史消息
+
+            bindPrivateChatEvents();
+
             fetch(`/api/private_messages/${withUser}`)
                 .then(response => response.json())
                 .then(data => {
@@ -537,9 +522,9 @@
                         data.messages.forEach(msg => {
                             const isSent = msg.sender === getElementSafe('username-display').textContent.trim();
                             appendPrivateMessage(
-                                isSent ? '你' : msg.sender, 
-                                msg.message, 
-                                msg.timestamp, 
+                                isSent ? '你' : msg.sender,
+                                msg.message,
+                                msg.timestamp,
                                 isSent,
                                 false
                             );
@@ -550,36 +535,83 @@
                 })
                 .catch(error => console.error('加载私聊历史失败:', error));
         }
-    
-        // 追加私聊消息到UI
+
+        // 动态绑定私聊窗口事件
+        function bindPrivateChatEvents() {
+            const minimizeButton = getElementSafe('minimize-button');
+            const closeButton = getElementSafe('close-button');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            const privateSendButton = getElementSafe('private-send-button');
+            const privateMessageInput = getElementSafe('private-message');
+
+            if (minimizeButton) {
+                minimizeButton.removeEventListener('click', minimizePrivateChat);
+                minimizeButton.addEventListener('click', () => {
+                    console.log('点击最小化按钮');
+                    minimizePrivateChat();
+                });
+            }
+
+            if (closeButton) {
+                closeButton.removeEventListener('click', closePrivateChat);
+                closeButton.addEventListener('click', () => {
+                    console.log('点击关闭按钮');
+                    closePrivateChat();
+                });
+            }
+
+            if (minimizedChat) {
+                minimizedChat.removeEventListener('click', restorePrivateChat);
+                minimizedChat.addEventListener('click', () => {
+                    console.log('点击恢复窗口');
+                    restorePrivateChat();
+                });
+            }
+
+            if (privateSendButton) {
+                privateSendButton.removeEventListener('click', sendPrivateMessage);
+                privateSendButton.addEventListener('click', sendPrivateMessage);
+            }
+
+            if (privateMessageInput) {
+                privateMessageInput.removeEventListener('keypress', handlePrivateMessageKeypress);
+                privateMessageInput.addEventListener('keypress', handlePrivateMessageKeypress);
+            }
+        }
+
+        function handlePrivateMessageKeypress(e) {
+            if (e.key === 'Enter') sendPrivateMessage();
+        }
+
+        // 追加私聊消息
         function appendPrivateMessage(sender, message, timestamp, isSent, scrollToBottom = true) {
             const container = getElementSafe('private-messages');
             if (!container) return;
-            
+
             const messageDiv = document.createElement('div');
             messageDiv.className = `private-message-bubble ${isSent ? 'sent' : 'received'}`;
             messageDiv.textContent = message;
-            
+
             const timeDiv = document.createElement('div');
             timeDiv.className = 'private-message-time';
             timeDiv.textContent = `${sender} · ${timestamp}`;
-            
+
             const wrapper = document.createElement('div');
             wrapper.appendChild(messageDiv);
             wrapper.appendChild(timeDiv);
-            
+
             container.appendChild(wrapper);
-            
+
             if (scrollToBottom) {
                 container.scrollTop = container.scrollHeight;
             }
         }
-    
+
         // 发送私聊消息
         function sendPrivateMessage() {
             const input = getElementSafe('private-message');
             if (!input?.value.trim() || !currentPrivateChat || !socket) return;
-            
+
             socket.emit('private_message', {
                 to: currentPrivateChat,
                 message: input.value
@@ -589,49 +621,57 @@
                 }
             });
         }
-    
-        // 关闭私聊窗口
-        function closePrivateChat() {
-            const privateChat = getElementSafe('private-chat');
-            const minimizedChat = getElementSafe('private-chat-minimized');
-            if (privateChat && minimizedChat) {
-                privateChat.style.display = 'none'; // 强制隐藏
-                minimizedChat.style.display = 'none';
-                currentPrivateChat = null;
-                
-                // 清除未读消息计数
-                if (unreadMessages[currentPrivateChat]) {
-                    unreadMessages[currentPrivateChat] = 0;
-                    updateUnreadCount();
-                }
-            }
-        }
-    
+
         // 最小化私聊窗口
         function minimizePrivateChat() {
             const privateChat = getElementSafe('private-chat');
             const minimizedChat = getElementSafe('private-chat-minimized');
             if (currentPrivateChat && privateChat && minimizedChat) {
-                privateChat.style.display = 'none'; // 强制隐藏
-                minimizedChat.style.display = 'flex'; // 强制显示
+                console.log('执行最小化操作');
+                privateChat.style.display = 'none';
+                minimizedChat.style.display = 'flex';
+            } else {
+                console.error('最小化失败，缺少必要元素或当前无私聊');
             }
         }
-    
+
+        // 关闭私聊窗口
+        function closePrivateChat() {
+            const privateChat = getElementSafe('private-chat');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (privateChat && minimizedChat) {
+                console.log('执行关闭操作');
+                privateChat.style.display = 'none';
+                minimizedChat.style.display = 'none';
+                currentPrivateChat = null;
+
+                if (unreadMessages[currentPrivateChat]) {
+                    unreadMessages[currentPrivateChat] = 0;
+                    updateUnreadCount();
+                }
+            } else {
+                console.error('关闭失败，缺少必要元素');
+            }
+        }
+
         // 恢复私聊窗口
         function restorePrivateChat() {
             const privateChat = getElementSafe('private-chat');
             const minimizedChat = getElementSafe('private-chat-minimized');
             if (currentPrivateChat && privateChat && minimizedChat) {
-                privateChat.style.display = 'flex'; // 强制显示
+                console.log('执行恢复操作');
+                privateChat.style.display = 'flex';
                 minimizedChat.style.display = 'none';
+            } else {
+                console.error('恢复失败，缺少必要元素或当前无私聊');
             }
         }
-    
+
         // 更新未读消息计数
         function updateUnreadCount() {
             const totalUnread = Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
             const unreadCountElement = getElementSafe('unread-count');
-            
+
             if (totalUnread > 0) {
                 unreadCountElement.textContent = totalUnread;
                 unreadCountElement.classList.remove('hidden');
@@ -639,13 +679,13 @@
                 unreadCountElement.classList.add('hidden');
             }
         }
-    
+
         // 发送普通消息
         function sendMessage() {
             try {
                 const messageInput = getElementSafe('message-input');
                 if (!messageInput?.value.trim() || !socket) return;
-                
+
                 socket.emit('message', { 
                     text: messageInput.value,
                     type: 'text'
@@ -660,43 +700,39 @@
                 console.error('发送消息出错:', e);
             }
         }
-    
+
         // 图片上传处理
         function handleImageUpload(e) {
             const file = e.target.files[0];
             if (!file) return;
-            
-            // 文件类型验证
+
             if (!['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
                 alert('只支持JPEG、PNG和GIF格式的图片');
                 return;
             }
-            
-            // 文件大小验证 (5MB)
+
             if (file.size > 5 * 1024 * 1024) {
                 alert('图片大小不能超过5MB');
                 return;
             }
-            
+
             const progressContainer = getElementSafe('upload-progress');
             const progressBar = getElementSafe('progress-bar');
-            
+
             if (progressContainer && progressBar) {
                 progressContainer.classList.remove('hidden');
                 progressBar.style.width = '0%';
             }
-            
+
             const formData = new FormData();
             formData.append('file', file);
-            
+
             fetch('https://chat.lxlxlx.xin/upload', {
                 method: 'POST',
                 body: formData
             })
             .then(response => {
-                if (!response.ok) {
-                    throw new Error('上传失败: ' + response.statusText);
-                }
+                if (!response.ok) throw new Error('上传失败: ' + response.statusText);
                 return response.json();
             })
             .then(data => {
@@ -714,83 +750,36 @@
                 alert('上传失败: ' + error.message);
             })
             .finally(() => {
-                if (progressContainer) {
-                    progressContainer.classList.add('hidden');
-                }
+                if (progressContainer) progressContainer.classList.add('hidden');
                 e.target.value = '';
             });
         }
-    
+
         // 初始化应用
         document.addEventListener('DOMContentLoaded', () => {
             if (chatInitialized) return;
             chatInitialized = true;
-            
-            // 初始化Socket连接
+
             const socket = initSocket();
             initPrivateChat();
-            
-            // 绑定发送按钮事件
+
             const sendButton = getElementSafe('send-button');
-            if (sendButton) {
-                sendButton.addEventListener('click', sendMessage);
-            }
-            
-            // 绑定消息输入框回车事件
+            if (sendButton) sendButton.addEventListener('click', sendMessage);
+
             const messageInput = getElementSafe('message-input');
             if (messageInput) {
                 messageInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') sendMessage();
                 });
             }
-            
-            // 绑定图片上传事件
+
             const imageUpload = getElementSafe('image-upload');
-            if (imageUpload) {
-                imageUpload.addEventListener('change', handleImageUpload);
-            }
-            
-            // 绑定私聊相关按钮事件
-            const privateSendButton = getElementSafe('private-send-button');
-            if (privateSendButton) {
-                privateSendButton.addEventListener('click', sendPrivateMessage);
-            }
-            
-            const privateMessageInput = getElementSafe('private-message');
-            if (privateMessageInput) {
-                privateMessageInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') sendPrivateMessage();
-                });
-            }
-            
-            // 修改部分：确保最小化和关闭按钮的事件绑定正确
-            const minimizeButton = getElementSafe('minimize-button');
-            if (minimizeButton) {
-                minimizeButton.addEventListener('click', () => {
-                    console.log('点击最小化');
-                    minimizePrivateChat();
-                });
-            }
-            
-            const closeButton = getElementSafe('close-button');
-            if (closeButton) {
-                closeButton.addEventListener('click', () => {
-                    console.log('点击关闭');
-                    closePrivateChat();
-                });
-            }
-            
-            const minimizedChat = getElementSafe('private-chat-minimized');
-            if (minimizedChat) {
-                minimizedChat.addEventListener('click', restorePrivateChat);
-            }
-            
-            // 请求通知权限
+            if (imageUpload) imageUpload.addEventListener('change', handleImageUpload);
+
             if (Notification.permission !== 'granted') {
                 Notification.requestPermission();
             }
-            
-            // 暴露必要的函数到全局
+
             window.startPrivateChat = startPrivateChat;
             window.sendPrivateMessage = sendPrivateMessage;
             window.closePrivateChat = closePrivateChat;
