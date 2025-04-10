@@ -492,6 +492,7 @@
 
         // 启动私聊
         function startPrivateChat(withUser) {
+            console.log('启动私聊:', withUser);
             currentPrivateChat = withUser;
 
             if (unreadMessages[withUser]) {
@@ -509,11 +510,11 @@
             if (privateChat && minimizedChat) {
                 privateChat.style.display = 'flex';
                 minimizedChat.style.display = 'none';
+            } else {
+                console.error('私聊窗口元素未找到');
             }
             getElementSafe('private-messages').innerHTML = '';
             getElementSafe('private-message').focus();
-
-            bindPrivateChatEvents();
 
             fetch(`/api/private_messages/${withUser}`)
                 .then(response => response.json())
@@ -534,53 +535,6 @@
                     }
                 })
                 .catch(error => console.error('加载私聊历史失败:', error));
-        }
-
-        // 动态绑定私聊窗口事件
-        function bindPrivateChatEvents() {
-            const minimizeButton = getElementSafe('minimize-button');
-            const closeButton = getElementSafe('close-button');
-            const minimizedChat = getElementSafe('private-chat-minimized');
-            const privateSendButton = getElementSafe('private-send-button');
-            const privateMessageInput = getElementSafe('private-message');
-
-            if (minimizeButton) {
-                minimizeButton.removeEventListener('click', minimizePrivateChat);
-                minimizeButton.addEventListener('click', () => {
-                    console.log('点击最小化按钮');
-                    minimizePrivateChat();
-                });
-            }
-
-            if (closeButton) {
-                closeButton.removeEventListener('click', closePrivateChat);
-                closeButton.addEventListener('click', () => {
-                    console.log('点击关闭按钮');
-                    closePrivateChat();
-                });
-            }
-
-            if (minimizedChat) {
-                minimizedChat.removeEventListener('click', restorePrivateChat);
-                minimizedChat.addEventListener('click', () => {
-                    console.log('点击恢复窗口');
-                    restorePrivateChat();
-                });
-            }
-
-            if (privateSendButton) {
-                privateSendButton.removeEventListener('click', sendPrivateMessage);
-                privateSendButton.addEventListener('click', sendPrivateMessage);
-            }
-
-            if (privateMessageInput) {
-                privateMessageInput.removeEventListener('keypress', handlePrivateMessageKeypress);
-                privateMessageInput.addEventListener('keypress', handlePrivateMessageKeypress);
-            }
-        }
-
-        function handlePrivateMessageKeypress(e) {
-            if (e.key === 'Enter') sendPrivateMessage();
         }
 
         // 追加私聊消息
@@ -775,6 +729,47 @@
 
             const imageUpload = getElementSafe('image-upload');
             if (imageUpload) imageUpload.addEventListener('change', handleImageUpload);
+
+            // 修改部分：将私聊按钮事件绑定移到此处
+            const minimizeButton = getElementSafe('minimize-button');
+            if (minimizeButton) {
+                minimizeButton.addEventListener('click', () => {
+                    console.log('点击最小化按钮');
+                    minimizePrivateChat();
+                });
+            } else {
+                console.error('未找到最小化按钮');
+            }
+
+            const closeButton = getElementSafe('close-button');
+            if (closeButton) {
+                closeButton.addEventListener('click', () => {
+                    console.log('点击关闭按钮');
+                    closePrivateChat();
+                });
+            } else {
+                console.error('未找到关闭按钮');
+            }
+
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (minimizedChat) {
+                minimizedChat.addEventListener('click', () => {
+                    console.log('点击恢复窗口');
+                    restorePrivateChat();
+                });
+            } else {
+                console.error('未找到最小化窗口');
+            }
+
+            const privateSendButton = getElementSafe('private-send-button');
+            if (privateSendButton) privateSendButton.addEventListener('click', sendPrivateMessage);
+
+            const privateMessageInput = getElementSafe('private-message');
+            if (privateMessageInput) {
+                privateMessageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') sendPrivateMessage();
+                });
+            }
 
             if (Notification.permission !== 'granted') {
                 Notification.requestPermission();
