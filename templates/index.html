@@ -582,23 +582,29 @@
     
         // 关闭私聊窗口
         function closePrivateChat() {
-            getElementSafe('private-chat').classList.add('hidden');
-            getElementSafe('private-chat-minimized').classList.add('hidden');
-            currentPrivateChat = null;
-            
-            // 清除未读消息计数
-            if (unreadMessages[currentPrivateChat]) {
-                unreadMessages[currentPrivateChat] = 0;
-                updateUnreadCount();
+            const privateChat = getElementSafe('private-chat');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (privateChat && minimizedChat) {
+                privateChat.classList.add('hidden');
+                minimizedChat.classList.add('hidden');
+                currentPrivateChat = null;
+                
+                // 清除未读消息计数
+                if (unreadMessages[currentPrivateChat]) {
+                    unreadMessages[currentPrivateChat] = 0;
+                    updateUnreadCount();
+                }
             }
         }
     
         // 最小化私聊窗口
         function minimizePrivateChat() {
-            if (!currentPrivateChat) return;
+            const privateChat = getElementSafe('private-chat');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (!currentPrivateChat || !privateChat || !minimizedChat) return;
             
-            getElementSafe('private-chat').classList.add('hidden');
-            getElementSafe('private-chat-minimized').classList.remove('hidden');
+            privateChat.classList.add('hidden');
+            minimizedChat.classList.remove('hidden');
         }
     
         // 恢复私聊窗口
@@ -745,14 +751,19 @@
                 });
             }
             
+            // 修改部分：确保最小化和关闭按钮的事件绑定正确
             const minimizeButton = getElementSafe('minimize-button');
             if (minimizeButton) {
-                minimizeButton.addEventListener('click', minimizePrivateChat);
+                minimizeButton.addEventListener('click', () => {
+                    minimizePrivateChat();
+                });
             }
             
             const closeButton = getElementSafe('close-button');
             if (closeButton) {
-                closeButton.addEventListener('click', closePrivateChat);
+                closeButton.addEventListener('click', () => {
+                    closePrivateChat();
+                });
             }
             
             const minimizedChat = getElementSafe('private-chat-minimized');
@@ -773,4 +784,4 @@
         });
     </script>
 </body>
-</html>    
+</html>
