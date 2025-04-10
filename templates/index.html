@@ -58,6 +58,119 @@
             font-size: 12px;
             border: 1px dashed #d1d5db;
         }
+
+        /* 私聊窗口样式优化 */
+        #private-chat {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            height: 450px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            border: 1px solid #e5e7eb;
+        }
+        
+        #private-chat-header {
+            padding: 12px;
+            background: #3b82f6;
+            color: white;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        #private-messages {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            background: #f9fafb;
+        }
+        
+        #private-chat-input {
+            padding: 10px;
+            border-top: 1px solid #e5e7eb;
+            background: white;
+            border-bottom-left-radius: 10px;
+            border-bottom-right-radius: 10px;
+        }
+        
+        .private-message-bubble {
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        
+        .private-message-bubble.sent {
+            background: #3b82f6;
+            color: white;
+            margin-left: auto;
+            border-top-right-radius: 0;
+        }
+        
+        .private-message-bubble.received {
+            background: #e5e7eb;
+            color: #111827;
+            margin-right: auto;
+            border-top-left-radius: 0;
+        }
+        
+        .private-message-time {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 2px;
+            text-align: right;
+        }
+        
+        .private-chat-minimized {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            height: 40px;
+            background: #3b82f6;
+            color: white;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 15px;
+            cursor: pointer;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .unread-count {
+            background: #ef4444;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            #private-chat {
+                width: 300px;
+                height: 400px;
+            }
+            
+            .private-chat-minimized {
+                width: 180px;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -69,22 +182,6 @@
             <div class="w-1/4 bg-white rounded-lg shadow-md p-4 h-[70vh] overflow-y-auto">
                 <h2 class="text-lg font-semibold mb-4">在线用户 <span id="online-count" class="text-sm text-gray-500">(0)</span></h2>
                 <div id="user-list" class="space-y-2"></div>
-                <div id="private-chat" class="mt-4 hidden">
-                    <div class="flex justify-between items-center mb-2">
-                        <h3 class="font-medium">与 <span id="private-with" class="font-semibold"></span> 私聊</h3>
-                        <button onclick="closePrivateChat()" class="text-gray-500 hover:text-gray-700">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-                            </svg>
-                        </button>
-                    </div>
-                    <div id="private-messages" class="bg-gray-50 p-2 rounded mb-2 h-48 overflow-y-auto"></div>
-                    <div class="flex gap-2">
-                        <input id="private-message" type="text" placeholder="输入私聊消息"
-                               class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button onclick="sendPrivateMessage()" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">发送</button>
-                    </div>
-                </div>
             </div>
 
             <!-- 主聊天区 -->
@@ -132,6 +229,42 @@
                         图片
                         <input id="image-upload" type="file" accept="image/*" class="hidden">
                     </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 私聊窗口容器 -->
+    <div id="private-chat-container">
+        <!-- 最小化状态的私聊窗口 -->
+        <div id="private-chat-minimized" class="private-chat-minimized hidden">
+            <span id="minimized-with"></span>
+            <span id="unread-count" class="unread-count hidden">0</span>
+        </div>
+        
+        <!-- 完整私聊窗口 -->
+        <div id="private-chat" class="hidden">
+            <div id="private-chat-header">
+                <span>与 <span id="private-with"></span> 私聊</span>
+                <div>
+                    <button onclick="minimizePrivateChat()" class="mr-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <button onclick="closePrivateChat()">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div id="private-messages"></div>
+            <div id="private-chat-input">
+                <div class="flex gap-2">
+                    <input id="private-message" type="text" placeholder="输入私聊消息"
+                           class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="sendPrivateMessage()" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">发送</button>
                 </div>
             </div>
         </div>
@@ -448,6 +581,173 @@
                 Notification.requestPermission();
             }
         });
+        let currentPrivateChat = null;
+    let unreadMessages = {};
+    
+    // 初始化私聊功能
+    function initPrivateChat() {
+        socket.on('private_message_received', (data) => {
+            if (currentPrivateChat !== data.from) {
+                // 如果不是当前打开的聊天，增加未读计数
+                if (!unreadMessages[data.from]) {
+                    unreadMessages[data.from] = 0;
+                }
+                unreadMessages[data.from]++;
+                updateUnreadCount();
+                
+                // 显示通知
+                if (Notification.permission === 'granted') {
+                    new Notification(`来自 ${data.from} 的新消息`, {
+                        body: data.message,
+                        icon: '/static/favicon.ico'
+                    });
+                }
+            }
+            
+            // 如果聊天窗口是打开的，显示消息
+            if (currentPrivateChat === data.from) {
+                appendPrivateMessage(data.from, data.message, data.timestamp, false);
+            }
+        });
+        
+        socket.on('private_message_sent', (data) => {
+            if (currentPrivateChat === data.to) {
+                appendPrivateMessage('你', data.message, data.timestamp, true);
+            }
+        });
+    }
+    
+    // 启动私聊
+    window.startPrivateChat = function(withUser) {
+        currentPrivateChat = withUser;
+        
+        // 重置未读计数
+        if (unreadMessages[withUser]) {
+            unreadMessages[withUser] = 0;
+            updateUnreadCount();
+        }
+        
+        // 更新UI
+        getElementSafe('private-with').textContent = withUser;
+        getElementSafe('minimized-with').textContent = `私聊: ${withUser}`;
+        getElementSafe('private-chat').classList.remove('hidden');
+        getElementSafe('private-chat-minimized').classList.add('hidden');
+        getElementSafe('private-messages').innerHTML = '';
+        getElementSafe('private-message').focus();
+        
+        // 加载历史消息
+        fetch(`/api/private_messages/${withUser}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.messages && data.messages.length > 0) {
+                    data.messages.forEach(msg => {
+                        const isSent = msg.sender === getElementSafe('username-display').textContent.trim();
+                        appendPrivateMessage(
+                            isSent ? '你' : msg.sender, 
+                            msg.message, 
+                            msg.timestamp, 
+                            isSent,
+                            false // 不滚动，等所有消息加载完再滚动
+                        );
+                    });
+                    // 滚动到底部
+                    const container = getElementSafe('private-messages');
+                    container.scrollTop = container.scrollHeight;
+                }
+            })
+            .catch(error => console.error('加载私聊历史失败:', error));
+    };
+    
+    // 追加私聊消息到UI
+    function appendPrivateMessage(sender, message, timestamp, isSent, scrollToBottom = true) {
+        const container = getElementSafe('private-messages');
+        if (!container) return;
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `private-message ${isSent ? 'sent' : 'received'}`;
+        messageDiv.textContent = message;
+        
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'private-message-time';
+        timeDiv.textContent = `${sender} · ${timestamp}`;
+        
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(messageDiv);
+        wrapper.appendChild(timeDiv);
+        
+        container.appendChild(wrapper);
+        
+        if (scrollToBottom) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+    
+    // 发送私聊消息
+    window.sendPrivateMessage = function() {
+        const input = getElementSafe('private-message');
+        if (!input?.value.trim() || !currentPrivateChat) return;
+        
+        socket.emit('private_message', {
+            to: currentPrivateChat,
+            message: input.value
+        }, (ack) => {
+            if (!ack?.error) {
+                input.value = '';
+            }
+        });
+    };
+    
+    // 关闭私聊窗口
+    window.closePrivateChat = function() {
+        getElementSafe('private-chat').classList.add('hidden');
+        getElementSafe('private-chat-minimized').classList.add('hidden');
+        currentPrivateChat = null;
+    };
+    
+    // 最小化私聊窗口
+    window.minimizePrivateChat = function() {
+        if (!currentPrivateChat) return;
+        
+        getElementSafe('private-chat').classList.add('hidden');
+        getElementSafe('private-chat-minimized').classList.remove('hidden');
+    };
+    
+    // 恢复私聊窗口
+    function restorePrivateChat() {
+        if (!currentPrivateChat) return;
+        
+        getElementSafe('private-chat').classList.remove('hidden');
+        getElementSafe('private-chat-minimized').classList.add('hidden');
+    }
+    
+    // 更新未读消息计数
+    function updateUnreadCount() {
+        const totalUnread = Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
+        const unreadCountElement = getElementSafe('unread-count');
+        
+        if (totalUnread > 0) {
+            unreadCountElement.textContent = totalUnread;
+            unreadCountElement.classList.remove('hidden');
+        } else {
+            unreadCountElement.classList.add('hidden');
+        }
+    }
+    
+    // 在DOM加载完成后初始化
+    document.addEventListener('DOMContentLoaded', () => {
+        initPrivateChat();
+        
+        // 最小化窗口点击事件
+        getElementSafe('private-chat-minimized').addEventListener('click', restorePrivateChat);
+        
+        // 私聊消息回车发送
+        const privateMessageInput = getElementSafe('private-message');
+        if (privateMessageInput) {
+            privateMessageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendPrivateMessage();
+            });
+        }
+    });
     </script>
 </body>
 </html>

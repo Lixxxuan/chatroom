@@ -64,6 +64,29 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(is_private, target_user)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)")
         
+        c.execute('''CREATE TABLE IF NOT EXISTS private_conversations 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     user1 TEXT NOT NULL,
+                     user2 TEXT NOT NULL,
+                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                     UNIQUE(user1, user2))''')
+        
+        # 新增私聊消息表 (替代原messages表中的私聊消息)
+        c.execute('''CREATE TABLE IF NOT EXISTS private_messages 
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     conversation_id INTEGER NOT NULL,
+                     sender TEXT NOT NULL,
+                     message TEXT NOT NULL,
+                     timestamp TEXT NOT NULL,
+                     message_type TEXT DEFAULT 'text',
+                     FOREIGN KEY(conversation_id) REFERENCES private_conversations(id))''')
+        
+        c.execute("CREATE INDEX IF NOT EXISTS idx_private_conversations_users ON private_conversations(user1, user2)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_private_messages_conversation ON private_messages(conversation_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_private_messages_timestamp ON private_messages(timestamp)")
+        
+        conn.commit()
+        
         conn.commit()
 
 # 文件扩展名检查
@@ -414,6 +437,28 @@ def handle_private_message(data):
     color = get_user_color(sender)
     timestamp = datetime.now().strftime("%H:%M:%S")
     
+    # 获取或创建会话
+    with get_db_connection() as conn:
+        # 确保会话存在 (user1总是字母顺序较小的用户名)
+        user1, user2 = sorted([sender, receiver])
+        conn.execute('''INSERT OR IGNORE INTO private_conversations 
+                      (user1, user2) VALUES (?, ?)''', (user1, user2))
+        
+        # 获取会话ID
+        c = conn.cursor()
+        c.execute('''SELECT id FROM private_conversations 
+                   WHERE user1 = ? AND user2 = ?''', (user1, user2))
+        conversation_id = c.fetchone()['id']
+        
+        # 存储私聊消息
+        conn.execute('''INSERT INTO private_messages 
+                      (conversation_id, sender, message, timestamp, message_type)
+                      VALUES (?, ?, ?, ?, ?)''',
+                   (conversation_id, sender, message, 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'text'))
+        conn.commit()
+    
+    # 发送消息给接收者
     emit('private_message_received', {
         'from': sender,
         'message': message,
@@ -421,20 +466,31 @@ def handle_private_message(data):
         'color': color
     }, room=online_users[receiver]['sid'])
     
+    # 发送确认给发送者
     emit('private_message_sent', {
         'to': receiver,
-        'message': message
+        'message': message,
+        'timestamp': timestamp
     })
     
+@app.route('/api/private_messages/<other_user>')
+def get_private_messages(other_user):
+    if 'username' not in session:
+        return jsonify({'error': '未登录'}), 401
+    
+    current_user = session['username']
+    user1, user2 = sorted([current_user, other_user])
+    
     with get_db_connection() as conn:
-        conn.execute('''INSERT INTO messages 
-                      (username, message, timestamp, color, is_private, target_user, message_type)
-                      VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                   (sender, message, 
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    color, 1, receiver, 'text'))
-        conn.commit()
-
+        c = conn.cursor()
+        c.execute('''SELECT pm.sender, pm.message, pm.timestamp, pm.message_type
+                     FROM private_messages pm
+                     JOIN private_conversations pc ON pm.conversation_id = pc.id
+                     WHERE pc.user1 = ? AND pc.user2 = ?
+                     ORDER BY pm.timestamp DESC LIMIT 50''', (user1, user2))
+        messages = [dict(row) for row in c.fetchall()][::-1]
+    
+    return jsonify({'messages': messages})
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     init_db()
