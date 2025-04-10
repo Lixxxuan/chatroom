@@ -74,7 +74,29 @@
             z-index: 1000;
             border: 1px solid #e5e7eb;
         }
+        @media (max-width: 1024px) {
+            #private-chat {
+                width: 300px;
+                height: 400px;
+                bottom: 70px;
+                right: 10px;
+            }
+            
+            .private-chat-minimized {
+                width: 160px;
+            }
+        }
         
+        @media (max-width: 768px) {
+            #private-chat {
+                width: 280px;
+                height: 380px;
+                bottom: 60px;
+            }
+            
+            .private-chat-minimized {
+                width: 140px;
+            }
         #private-chat-header {
             padding: 12px;
             background: #3b82f6;
@@ -234,7 +256,6 @@
         </div>
     </div>
 
-    <!-- 私聊窗口容器 -->
     <div id="private-chat-container">
         <!-- 最小化状态的私聊窗口 -->
         <div id="private-chat-minimized" class="private-chat-minimized hidden">
@@ -551,7 +572,19 @@
             };
             
             window.closePrivateChat = function() {
-                getElementSafe('private-chat')?.classList.add('hidden');
+                const privateChat = getElementSafe('private-chat');
+                const minimizedChat = getElementSafe('private-chat-minimized');
+                
+                if (privateChat) privateChat.classList.add('hidden');
+                if (minimizedChat) minimizedChat.classList.add('hidden');
+                
+                currentPrivateChat = null;
+                
+                // 清除未读消息计数
+                if (unreadMessages[currentPrivateChat]) {
+                    unreadMessages[currentPrivateChat] = 0;
+                    updateUnreadCount();
+                }
             };
             
             window.sendPrivateMessage = function() {
@@ -582,172 +615,195 @@
             }
         });
         let currentPrivateChat = null;
-    let unreadMessages = {};
-    
-    // 初始化私聊功能
-    function initPrivateChat() {
-        socket.on('private_message_received', (data) => {
-            if (currentPrivateChat !== data.from) {
-                // 如果不是当前打开的聊天，增加未读计数
-                if (!unreadMessages[data.from]) {
-                    unreadMessages[data.from] = 0;
-                }
-                unreadMessages[data.from]++;
-                updateUnreadCount();
-                
-                // 显示通知
-                if (Notification.permission === 'granted') {
-                    new Notification(`来自 ${data.from} 的新消息`, {
-                        body: data.message,
-                        icon: '/static/favicon.ico'
-                    });
-                }
+let unreadMessages = {};
+
+// 初始化私聊功能
+function initPrivateChat() {
+    socket.on('private_message_received', (data) => {
+        if (currentPrivateChat !== data.from) {
+            // 如果不是当前打开的聊天，增加未读计数
+            if (!unreadMessages[data.from]) {
+                unreadMessages[data.from] = 0;
             }
-            
-            // 如果聊天窗口是打开的，显示消息
-            if (currentPrivateChat === data.from) {
-                appendPrivateMessage(data.from, data.message, data.timestamp, false);
-            }
-        });
-        
-        socket.on('private_message_sent', (data) => {
-            if (currentPrivateChat === data.to) {
-                appendPrivateMessage('你', data.message, data.timestamp, true);
-            }
-        });
-    }
-    
-    // 启动私聊
-    window.startPrivateChat = function(withUser) {
-        currentPrivateChat = withUser;
-        
-        // 重置未读计数
-        if (unreadMessages[withUser]) {
-            unreadMessages[withUser] = 0;
+            unreadMessages[data.from]++;
             updateUnreadCount();
-        }
-        
-        // 更新UI
-        getElementSafe('private-with').textContent = withUser;
-        getElementSafe('minimized-with').textContent = `私聊: ${withUser}`;
-        getElementSafe('private-chat').classList.remove('hidden');
-        getElementSafe('private-chat-minimized').classList.add('hidden');
-        getElementSafe('private-messages').innerHTML = '';
-        getElementSafe('private-message').focus();
-        
-        // 加载历史消息
-        fetch(`/api/private_messages/${withUser}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.messages && data.messages.length > 0) {
-                    data.messages.forEach(msg => {
-                        const isSent = msg.sender === getElementSafe('username-display').textContent.trim();
-                        appendPrivateMessage(
-                            isSent ? '你' : msg.sender, 
-                            msg.message, 
-                            msg.timestamp, 
-                            isSent,
-                            false // 不滚动，等所有消息加载完再滚动
-                        );
-                    });
-                    // 滚动到底部
-                    const container = getElementSafe('private-messages');
-                    container.scrollTop = container.scrollHeight;
-                }
-            })
-            .catch(error => console.error('加载私聊历史失败:', error));
-    };
-    
-    // 追加私聊消息到UI
-    function appendPrivateMessage(sender, message, timestamp, isSent, scrollToBottom = true) {
-        const container = getElementSafe('private-messages');
-        if (!container) return;
-        
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `private-message ${isSent ? 'sent' : 'received'}`;
-        messageDiv.textContent = message;
-        
-        const timeDiv = document.createElement('div');
-        timeDiv.className = 'private-message-time';
-        timeDiv.textContent = `${sender} · ${timestamp}`;
-        
-        const wrapper = document.createElement('div');
-        wrapper.appendChild(messageDiv);
-        wrapper.appendChild(timeDiv);
-        
-        container.appendChild(wrapper);
-        
-        if (scrollToBottom) {
-            container.scrollTop = container.scrollHeight;
-        }
-    }
-    
-    // 发送私聊消息
-    window.sendPrivateMessage = function() {
-        const input = getElementSafe('private-message');
-        if (!input?.value.trim() || !currentPrivateChat) return;
-        
-        socket.emit('private_message', {
-            to: currentPrivateChat,
-            message: input.value
-        }, (ack) => {
-            if (!ack?.error) {
-                input.value = '';
+            
+            // 显示通知
+            if (Notification.permission === 'granted') {
+                new Notification(`来自 ${data.from} 的新消息`, {
+                    body: data.message,
+                    icon: '/static/favicon.ico'
+                });
             }
-        });
-    };
-    
-    // 关闭私聊窗口
-    window.closePrivateChat = function() {
-        getElementSafe('private-chat').classList.add('hidden');
-        getElementSafe('private-chat-minimized').classList.add('hidden');
-        currentPrivateChat = null;
-    };
-    
-    // 最小化私聊窗口
-    window.minimizePrivateChat = function() {
-        if (!currentPrivateChat) return;
-        
-        getElementSafe('private-chat').classList.add('hidden');
-        getElementSafe('private-chat-minimized').classList.remove('hidden');
-    };
-    
-    // 恢复私聊窗口
-    function restorePrivateChat() {
-        if (!currentPrivateChat) return;
-        
-        getElementSafe('private-chat').classList.remove('hidden');
-        getElementSafe('private-chat-minimized').classList.add('hidden');
-    }
-    
-    // 更新未读消息计数
-    function updateUnreadCount() {
-        const totalUnread = Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
-        const unreadCountElement = getElementSafe('unread-count');
-        
-        if (totalUnread > 0) {
-            unreadCountElement.textContent = totalUnread;
-            unreadCountElement.classList.remove('hidden');
-        } else {
-            unreadCountElement.classList.add('hidden');
         }
+        
+        // 如果聊天窗口是打开的，显示消息
+        if (currentPrivateChat === data.from) {
+            appendPrivateMessage(data.from, data.message, data.timestamp, false);
+        }
+    });
+    
+    socket.on('private_message_sent', (data) => {
+        if (currentPrivateChat === data.to) {
+            appendPrivateMessage('你', data.message, data.timestamp, true);
+        }
+    });
+}
+
+// 启动私聊
+window.startPrivateChat = function(withUser) {
+    currentPrivateChat = withUser;
+    
+    // 重置未读计数
+    if (unreadMessages[withUser]) {
+        unreadMessages[withUser] = 0;
+        updateUnreadCount();
     }
+    
+    // 更新UI
+    getElementSafe('private-with').textContent = withUser;
+    getElementSafe('minimized-with').textContent = `私聊: ${withUser}`;
+    getElementSafe('private-chat').classList.remove('hidden');
+    getElementSafe('private-chat-minimized').classList.add('hidden');
+    getElementSafe('private-messages').innerHTML = '';
+    getElementSafe('private-message').focus();
+    
+    // 加载历史消息
+    fetch(`/api/private_messages/${withUser}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.messages && data.messages.length > 0) {
+                data.messages.forEach(msg => {
+                    const isSent = msg.sender === getElementSafe('username-display').textContent.trim();
+                    appendPrivateMessage(
+                        isSent ? '你' : msg.sender, 
+                        msg.message, 
+                        msg.timestamp, 
+                        isSent,
+                        false
+                    );
+                });
+                const container = getElementSafe('private-messages');
+                container.scrollTop = container.scrollHeight;
+            }
+        })
+        .catch(error => console.error('加载私聊历史失败:', error));
+};
+
+// 追加私聊消息到UI
+function appendPrivateMessage(sender, message, timestamp, isSent, scrollToBottom = true) {
+    const container = getElementSafe('private-messages');
+    if (!container) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `private-message-bubble ${isSent ? 'sent' : 'received'}`;
+    messageDiv.textContent = message;
+    
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'private-message-time';
+    timeDiv.textContent = `${sender} · ${timestamp}`;
+    
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(messageDiv);
+    wrapper.appendChild(timeDiv);
+    
+    container.appendChild(wrapper);
+    
+    if (scrollToBottom) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+// 发送私聊消息
+window.sendPrivateMessage = function() {
+    const input = getElementSafe('private-message');
+    if (!input?.value.trim() || !currentPrivateChat) return;
+    
+    socket.emit('private_message', {
+        to: currentPrivateChat,
+        message: input.value
+    }, (ack) => {
+        if (!ack?.error) {
+            input.value = '';
+        }
+    });
+};
+
+// 关闭私聊窗口
+window.closePrivateChat = function() {
+    getElementSafe('private-chat').classList.add('hidden');
+    getElementSafe('private-chat-minimized').classList.add('hidden');
+    currentPrivateChat = null;
+    
+    // 清除未读消息计数
+    if (unreadMessages[currentPrivateChat]) {
+        unreadMessages[currentPrivateChat] = 0;
+        updateUnreadCount();
+    }
+};
+
+// 最小化私聊窗口
+window.minimizePrivateChat = function() {
+    if (!currentPrivateChat) return;
+    
+    getElementSafe('private-chat').classList.add('hidden');
+    getElementSafe('private-chat-minimized').classList.remove('hidden');
+};
+
+// 恢复私聊窗口
+function restorePrivateChat() {
+    if (!currentPrivateChat) return;
+    
+    getElementSafe('private-chat').classList.remove('hidden');
+    getElementSafe('private-chat-minimized').classList.add('hidden');
+}
+
+// 更新未读消息计数
+function updateUnreadCount() {
+    const totalUnread = Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
+    const unreadCountElement = getElementSafe('unread-count');
+    
+    if (totalUnread > 0) {
+        unreadCountElement.textContent = totalUnread;
+        unreadCountElement.classList.remove('hidden');
+    } else {
+        unreadCountElement.classList.add('hidden');
+    }
+}
     
     // 在DOM加载完成后初始化
     document.addEventListener('DOMContentLoaded', () => {
-        initPrivateChat();
-        
-        // 最小化窗口点击事件
-        getElementSafe('private-chat-minimized').addEventListener('click', restorePrivateChat);
-        
-        // 私聊消息回车发送
-        const privateMessageInput = getElementSafe('private-message');
-        if (privateMessageInput) {
-            privateMessageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') sendPrivateMessage();
-            });
-        }
-    });
+    const socket = initSocket();
+    initPrivateChat();
+    
+    // 确保关闭按钮事件绑定
+    const closeButton = document.querySelector('#private-chat-header button:last-child');
+    if (closeButton) {
+        closeButton.addEventListener('click', closePrivateChat);
+    }
+    
+    // 最小化按钮事件绑定
+    const minimizeButton = document.querySelector('#private-chat-header button:first-child');
+    if (minimizeButton) {
+        minimizeButton.addEventListener('click', minimizePrivateChat);
+    }
+    
+    // 最小化窗口点击事件
+    getElementSafe('private-chat-minimized')?.addEventListener('click', restorePrivateChat);
+    
+    // 私聊消息回车发送
+    const privateMessageInput = getElementSafe('private-message');
+    if (privateMessageInput) {
+        privateMessageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendPrivateMessage();
+        });
+    }
+    
+    // 请求通知权限
+    if (Notification.permission !== 'granted') {
+        Notification.requestPermission();
+    }
+});
     </script>
 </body>
 </html>
