@@ -60,6 +60,12 @@
             border: 1px dashed #d1d5db;
         }
 
+        /* 主页面样式调整 */
+        .main-container {
+            position: relative;
+            z-index: 1; /* 确保主页面在私聊窗口之下 */
+        }
+
         /* 私聊窗口样式 */
         #private-chat {
             position: fixed;
@@ -188,7 +194,7 @@
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
-    <div class="flex-1 container mx-auto p-4 max-w-6xl">
+    <div class="flex-1 container mx-auto p-4 max-w-6xl main-container">
         <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">在线聊天室 - 欢迎 <span id="username-display">{{ username }}</span></h1>
 
         <div class="flex gap-4">
@@ -268,7 +274,7 @@
                     </button>
                     <button id="close-button">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-inology-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                         </svg>
                     </button>
                 </div>
@@ -514,8 +520,12 @@
             // 更新UI
             getElementSafe('private-with').textContent = withUser;
             getElementSafe('minimized-with').textContent = `私聊: ${withUser}`;
-            getElementSafe('private-chat').classList.remove('hidden');
-            getElementSafe('private-chat-minimized').classList.add('hidden');
+            const privateChat = getElementSafe('private-chat');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (privateChat && minimizedChat) {
+                privateChat.style.display = 'flex'; // 强制显示
+                minimizedChat.style.display = 'none';
+            }
             getElementSafe('private-messages').innerHTML = '';
             getElementSafe('private-message').focus();
             
@@ -585,8 +595,8 @@
             const privateChat = getElementSafe('private-chat');
             const minimizedChat = getElementSafe('private-chat-minimized');
             if (privateChat && minimizedChat) {
-                privateChat.classList.add('hidden');
-                minimizedChat.classList.add('hidden');
+                privateChat.style.display = 'none'; // 强制隐藏
+                minimizedChat.style.display = 'none';
                 currentPrivateChat = null;
                 
                 // 清除未读消息计数
@@ -601,18 +611,20 @@
         function minimizePrivateChat() {
             const privateChat = getElementSafe('private-chat');
             const minimizedChat = getElementSafe('private-chat-minimized');
-            if (!currentPrivateChat || !privateChat || !minimizedChat) return;
-            
-            privateChat.classList.add('hidden');
-            minimizedChat.classList.remove('hidden');
+            if (currentPrivateChat && privateChat && minimizedChat) {
+                privateChat.style.display = 'none'; // 强制隐藏
+                minimizedChat.style.display = 'flex'; // 强制显示
+            }
         }
     
         // 恢复私聊窗口
         function restorePrivateChat() {
-            if (!currentPrivateChat) return;
-            
-            getElementSafe('private-chat').classList.remove('hidden');
-            getElementSafe('private-chat-minimized').classList.add('hidden');
+            const privateChat = getElementSafe('private-chat');
+            const minimizedChat = getElementSafe('private-chat-minimized');
+            if (currentPrivateChat && privateChat && minimizedChat) {
+                privateChat.style.display = 'flex'; // 强制显示
+                minimizedChat.style.display = 'none';
+            }
         }
     
         // 更新未读消息计数
@@ -755,6 +767,7 @@
             const minimizeButton = getElementSafe('minimize-button');
             if (minimizeButton) {
                 minimizeButton.addEventListener('click', () => {
+                    console.log('点击最小化');
                     minimizePrivateChat();
                 });
             }
@@ -762,6 +775,7 @@
             const closeButton = getElementSafe('close-button');
             if (closeButton) {
                 closeButton.addEventListener('click', () => {
+                    console.log('点击关闭');
                     closePrivateChat();
                 });
             }
